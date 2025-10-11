@@ -280,7 +280,7 @@ class Flexmodel(Flex):
             position = 1
 
         if position_limit < 1:
-            position_limit = 1
+            position_limit = 10
 
         cursor = cls.collection().find(queries).skip((position - 1) * position_limit).limit(position_limit)
 
@@ -328,28 +328,13 @@ def field(
     constraint: Schema.Field.Constraint = Schema.Field.Constraint(),
     callback: Optional[Callable[[Any], Any]] = None,
 ) -> Schema.Field:
-    return Schema.Field(
-        _type,
-        default=default,
-        nullable=nullable,
-        constraint=constraint,
-        callback=callback,
-    )
+    return Schema.Field(_type, default=default, nullable=nullable, constraint=constraint, callback=callback)
 
 
 def field_constraint(
-    *,
-    item_type: Optional[Type] = None,
-    min_length: Optional[int] = None,
-    max_length: Optional[int] = None,
-    pattern: Optional[str] = None,
+    *, item_type: Optional[Type] = None, min_length: Optional[int] = None, max_length: Optional[int] = None, pattern: Optional[str] = None
 ) -> Schema.Field.Constraint:
-    return Schema.Field.Constraint(
-        item_type=item_type,
-        min_length=min_length,
-        max_length=max_length,
-        pattern=pattern,
-    )
+    return Schema.Field.Constraint(item_type=item_type, min_length=min_length, max_length=max_length, pattern=pattern)
 
 
 def default(flex: Flex | Flexmodel, name: str) -> Any:
