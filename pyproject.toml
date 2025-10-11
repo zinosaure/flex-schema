@@ -13,7 +13,7 @@ keywords = ["module", "namespace"]
 authors = [{ name = "Gino D. (@zinosaure)", email = "zinosaure@outlook.com" }]
 dependencies = ["mongo", "pymongo"]
 classifiers = [
-    "Development Status :: Released",
+    "Development Status :: 4 - Beta",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
