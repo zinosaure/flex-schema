@@ -1,6 +1,6 @@
 # Flex-Schema
 
-A flexible and powerful schema validation library for Python with MongoDB integration. Flex-Schema provides a declarative way to define data models with built-in validation, type checking, and seamless database operations.
+A flexible and powerful schema validation library for Python with MongoDB and SQLite3 integration. Flex-Schema provides a declarative way to define data models with built-in validation, type checking, and seamless database operations.
 
 ## Features
 
@@ -8,6 +8,7 @@ A flexible and powerful schema validation library for Python with MongoDB integr
 - **Type Safety**: Built-in type checking for common Python types (str, int, float, bool, list, tuple)
 - **Field Validation**: Comprehensive validation with constraints (min/max length, patterns, nullable fields)
 - **MongoDB Integration**: Seamless integration with MongoDB for CRUD operations
+- **SQLite3 Integration**: Full SQLite3 support with the same API as MongoDB
 - **Nested Models**: Support for complex nested data structures
 - **Auto-generated IDs**: Automatic UUID generation and timestamp tracking
 - **Callbacks**: Transform field values with custom callback functions
@@ -158,6 +159,58 @@ product.commit()
 - `fetch_all(queries={}, position=1, position_limit=10)`: Get paginated results
 - `count()`: Count documents in collection
 - `truncate()`: Drop the collection
+
+### FlexmodelSQLite
+
+The `FlexmodelSQLite` class extends `Flex` with SQLite3 persistence capabilities, providing the same API as `Flexmodel` but using SQLite instead of MongoDB:
+
+```python
+from flexschema import Schema, FlexmodelSQLite, field
+import sqlite3
+
+class Product(FlexmodelSQLite):
+    schema: Schema = Schema.ident(
+        name=field(str, nullable=False),
+        price=field(float, default=0.0),
+        in_stock=field(bool, default=True),
+    )
+
+# Attach to SQLite database
+conn = sqlite3.connect("mydb.sqlite")
+Product.attach(conn, "products")
+
+# Create and save
+product = Product(name="Laptop", price=999.99)
+product.commit()
+
+# Load by ID
+loaded = Product.load(product.id)
+
+# Query
+found = Product.fetch({"name": "Laptop"})
+```
+
+**Database Schema:**
+
+FlexmodelSQLite stores data in tables with the following structure:
+- `_id` (TEXT PRIMARY KEY): UUID identifier
+- `_updated_at` (TEXT): ISO format timestamp
+- `document` (TEXT): JSON representation of the full document
+
+**Instance Methods:**
+- `commit(commit_all=True)`: Save to database
+- `delete()`: Remove from database
+- `id`: Get the document ID
+- `updated_at`: Get last update timestamp
+
+**Class Methods:**
+- `attach(database, table_name=None)`: Connect to SQLite database (creates table if needed)
+- `detach()`: Disconnect from SQLite database
+- `load(_id)`: Load a document by ID
+- `fetch(queries)`: Find one document matching queries
+- `fetch_all(queries={}, position=1, position_limit=10)`: Get paginated results
+- `count()`: Count documents in table
+- `truncate()`: Delete all records from table
 
 ## Complete Example
 
