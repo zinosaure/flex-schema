@@ -65,7 +65,7 @@ class User(FlexmodelSQLite):
 
 if __name__ == "__main__":
     # Connect to SQLite database (creates file if it doesn't exist)
-    conn = sqlite3.connect("testdb.sqlite")
+    conn = sqlite3.connect(":memory:")  # use ":memory:" for in-memory database
     
     User.attach(conn, "users")  # connect to SQLite database
     Login.attach(conn, "logins")  # connect to SQLite database
@@ -88,8 +88,7 @@ if __name__ == "__main__":
         print(user.to_json(indent=4))
         
         # Demonstrate loading
-        loaded_user = User.load(user.id)
-        if loaded_user:
+        if loaded_user := User.load(user.id):
             print("\nLoaded user from database:")
             print(f"Loaded user ID (should be {user.id}): {loaded_user.id}")
             print(f"Loaded login ID (should be {user.login.id}): {loaded_user.login.id}")
@@ -99,8 +98,7 @@ if __name__ == "__main__":
         print(f"\nTotal users in database: {User.count()}")
         
         # Demonstrate fetch
-        fetched_user = User.fetch({"email": "john.doe@example.com"})
-        if fetched_user:
+        if fetched_user := User.fetch({"email": "john.doe@example.com"}):
             print("\nFetched user by email:")
             print(fetched_user.to_json(indent=4))
     else:

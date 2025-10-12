@@ -1,17 +1,37 @@
 import re
 import json
 import uuid
+import logging
 import sqlite3
+import pymongo
 
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Type
 
-from pymongo import MongoClient
-from pymongo.collection import Collection
+
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("pymongo").setLevel(logging.WARNING)
+logging.getLogger("sqlite3").setLevel(logging.WARNING)
 
 
 class SchemaDefinitionException(Exception):
-    pass
+    def __init__(self, message: str):
+        super().__init__(message)
+        logging.getLogger("flexschema").error(message)
+
+    @staticmethod
+    def silent_log(message: str):
+        logging.getLogger("flexschema").info(message)
+
+
+class FlexmodelException(Exception):
+    def __init__(self, message: str):
+        super().__init__(message)
+        logging.getLogger("flexmodel").error(message)
+
+    @staticmethod
+    def silent_log(message: str):
+        logging.getLogger("flexmodel").info(message)
 
 
 class Schema:
@@ -53,11 +73,8 @@ class Schema:
             raise SchemaDefinitionException(f"Field '{name}': has not a valid type.")
 
         # Check if type is a primitive or a subclass of Flex
-        is_valid_type = (
-            field.type in (str, int, float, bool, list, tuple) or
-            (hasattr(field.type, '__mro__') and any(base.__name__ == 'Flex' for base in field.type.__mro__))
-        )
-        
+        is_valid_type = field.type in (str, int, float, bool, list, tuple) or (hasattr(field.type, "__mro__") and any(base.__name__ == "Flex" for base in field.type.__mro__))
+
         if not is_valid_type:
             raise SchemaDefinitionException(f"Field '{name}': has not a valid type '{field.type.__name__}'.")
 
@@ -164,9 +181,8 @@ class Flex:
     def update(self, **data: Any):
         for name, field in self.schema:
             value = data.get(name, self.__dict__.get(name, field.default))
-
-            # Handle references for any class with a load method
-            if hasattr(field.type, 'load') and isinstance(value, dict) and (id := value.get("$id")):
+            
+            if issubclass(field.type, Flexmodel) and isinstance(value, dict) and (id := value.get("$id")):
                 value = field.type.load(id)
             elif issubclass(field.type, Flex) and isinstance(value, dict):
                 value = field.type().update(**value)
@@ -190,8 +206,7 @@ class Flex:
 
     def to_dict(self, commit: bool = False) -> dict[str, Any]:
         def serialize(value, field: Optional[Schema.Field] = None):
-            # Check if value has an id attribute (works for both Flexmodel and FlexmodelSQLite)
-            if commit and hasattr(value, 'id') and hasattr(value.__class__, 'load'):
+            if commit and isinstance(value, Flexmodel) and hasattr(value, "id"):
                 return {"$id": value.id}
             elif isinstance(value, Flex):
                 value = value.to_dict()
@@ -217,14 +232,23 @@ class Flex:
 
 class Flexmodel(Flex):
     schema: Schema = Schema.ident()
-    database: Optional[MongoClient] = None
-    collection_name: str = "not_defined"
+    database: pymongo.MongoClient | sqlite3.Connection = sqlite3.Connection(":memory:")
+    database_engine: str = "sqlite3"  # or "mongodb"
+    table_name: str = "not_defined"
+
+    @property
+    def is_mongodb(self) -> bool:
+        return self.database_engine == "mongodb"
+
+    @property
+    def is_sqlitedb(self) -> bool:
+        return self.database_engine == "sqlite3"
 
     @property
     def id(self) -> str:
-        # If _id is not set or is the shared default from schema, generate a new unique one
         if "_id" not in self.__dict__ or self.__dict__["_id"] == self.schema["_id"].default:
             self.__dict__["_id"] = str(uuid.uuid4())
+
         return self.__dict__["_id"]
 
     @property
@@ -232,14 +256,11 @@ class Flexmodel(Flex):
         return self.__dict__.get("_updated_at", datetime.now(timezone.utc).isoformat())
 
     def update(self, **data: Any):
-        # Call parent update
         result = super().update(**data)
-        
-        # If _id was not explicitly provided in data and got set to schema default, ensure it's unique
+
         if "_id" not in data and self.__dict__.get("_id") == self.schema["_id"].default:
-            # Access id property to ensure a unique ID is generated
             _ = self.id
-        
+
         return result
 
     def commit(self, commit_all: bool = True) -> bool:
@@ -253,71 +274,181 @@ class Flexmodel(Flex):
 
         self.update(_updated_at=datetime.now(timezone.utc).isoformat())
 
-        return self.collection().replace_one({"_id": self.id}, self.to_dict(commit=commit_all), upsert=True).acknowledged
+        try:
+            if self.is_mongodb and (collection := self.database[self.table_name]):
+                return collection.replace_one({"_id": self.id}, self.to_dict(commit=commit_all), upsert=True).acknowledged
+            elif self.is_sqlitedb and (c := self.database.cursor()):
+                c.execute(
+                    f"""
+                        INSERT OR REPLACE INTO {self.table_name} 
+                            (_id, _updated_at, document) 
+                        VALUES (?, ?, ?);
+                    """,
+                    (self.id, self.updated_at, json.dumps(self.to_dict(commit=commit_all), ensure_ascii=False)),
+                )
+                self.database.commit()
+
+                return True
+        except Exception as e:
+            FlexmodelException.silent_log(f"Commit error: {e}")
+
+        return False
 
     def delete(self) -> bool:
-        return self.collection().delete_one({"_id": self.id}).deleted_count > 0
+        try:
+            if self.is_mongodb and (collection := self.database[self.table_name]):
+                return collection.delete_one({"_id": self.id}).deleted_count > 0
+            elif self.is_sqlitedb and (c := self.database.cursor()):
+                c.execute(f"DELETE FROM {self.table_name} WHERE _id = ?", (self.id,))
+                self.database.commit()
+
+                return c.rowcount > 0
+        except Exception as e:
+            FlexmodelException.silent_log(f"Delete error: {e}")
+
+        return False
 
     @classmethod
-    def attach(cls, database: MongoClient, collection_name: Optional[str] = None):
-        cls.database = database
-
-        if not collection_name:
-            cls.collection_name = cls.__name__.lower() + "s"
+    def attach(cls, database: pymongo.MongoClient | sqlite3.Connection, table_name: Optional[str] = None):
+        if isinstance(database, pymongo.MongoClient):
+            cls.database_engine = "mongodb"
+        elif isinstance(database, sqlite3.Connection):
+            cls.database_engine = "sqlite3"
         else:
-            cls.collection_name = collection_name
+            raise FlexmodelException("Cannot attach to the database: invalid database type. Only 'pymongo.MongoClient' or 'sqlite3.Connection' are supported.")
+
+        cls.database = database
+        cls.table_name = table_name or cls.__name__.lower() + "s"
+
+        try:
+            if cls.is_mongodb and (collection := cls.database[cls.table_name]):
+                collection.create_index("_id", unique=True)
+            elif cls.is_sqlitedb and (c := cls.database.cursor()):
+                c.execute(
+                    f"""
+                        CREATE TABLE IF NOT EXISTS {cls.table_name} (
+                            _id TEXT PRIMARY KEY,
+                            _updated_at TEXT NOT NULL,
+                            document TEXT NOT NULL
+                        )
+                    """
+                )
+                cls.database.commit()
+        except Exception as e:
+            raise FlexmodelException(f"Cannot create index/table in the database: {e}")
 
     @classmethod
     def detach(cls):
-        cls.database = None
-        cls.collection_name = "not_defined"
+        if cls.is_sqlitedb:
+            cls.database.close()
 
-    @classmethod
-    def collection(cls) -> Collection:
-        if cls.database is None:
-            raise Exception(f"Flexmodel '{cls.__name__}': has no database attached. Use '{cls.__name__}.attach(database, collection_name)' to attach a database.")
-
-        return cls.database[cls.collection_name]
+        cls.database = sqlite3.Connection(":memory:")
+        cls.database_engine = "sqlite3"
 
     @classmethod
     def load(cls, _id: str) -> Optional["Flexmodel"]:
-        if document := cls.collection().find_one({"_id": _id}):
-            return cls(**document)
+        try:
+            if cls.is_mongodb and (collection := cls.database[cls.table_name]):
+                if document := collection.find_one({"_id": _id}):
+                    return cls(**document)
+            elif cls.is_sqlitedb and (c := cls.database.cursor()):
+                c.execute(f"SELECT document FROM {cls.table_name} WHERE _id = ?", (_id,))
+
+                if (item := c.fetchone()) and (document := json.loads(item[0])):
+                    return cls(**document)
+        except Exception as e:
+            FlexmodelException.silent_log(f"Load error: {e}")
 
     @classmethod
     def count(cls) -> int:
-        return cls.collection().count_documents({})
+        try:
+            if cls.is_mongodb and (collection := cls.database[cls.table_name]):
+                return collection.count_documents({})
+            elif cls.is_sqlitedb and (c := cls.database.cursor()):
+                c.execute(f"SELECT COUNT(*) FROM {cls.table_name}")
+
+                if item := c.fetchone():
+                    return item[0]
+        except Exception as e:
+            FlexmodelException.silent_log(f"Count error: {e}")
+
+        return 0
 
     @classmethod
     def truncate(cls):
-        return cls.collection().drop()
+        try:
+            if cls.is_mongodb and (collection := cls.database[cls.table_name]):
+                collection.drop()
+            elif cls.is_sqlitedb and (c := cls.database.cursor()):
+                c.execute(f"DELETE FROM {cls.table_name}")
+                cls.database.commit()
+        except Exception as e:
+            FlexmodelException.silent_log(f"Truncate error: {e}")
 
     @classmethod
     def fetch(cls, queries: dict[str, Any]) -> Optional["Flexmodel"]:
-        if document := cls.collection().find_one(queries):
-            return cls(**document)
+        try:
+            if cls.is_mongodb and (collection := cls.database[cls.table_name]):
+                if document := collection.find_one(queries):
+                    return cls(**document)
+            elif cls.is_sqlitedb and (c := cls.database.cursor()):
+                params = []
+                conditions = []
+
+                for key, value in queries.items():
+                    params.append(json.dumps(value) if not isinstance(value, (str, int, float)) else value)
+                    conditions.append(f"json_extract(document, '$.{key}') = ?")
+
+                where_clause = " AND ".join(conditions) if conditions else "1=1"
+                c.execute(f"SELECT document FROM {cls.table_name} WHERE {where_clause} LIMIT 1", params)
+
+                if (item := c.fetchone()) and (document := json.loads(item[0])):
+                    return cls(**document)
+        except Exception as e:
+            FlexmodelException.silent_log(f"Fetch error: {e}")
 
     @classmethod
-    def fetch_all(cls, queries: dict[str, Any] = {}, position: int = 1, position_limit: int = 10) -> "Flexmodel.Pagination":
-        if position < 1:
-            position = 1
+    def fetch_all(cls, queries: dict[str, Any] = {}, page: int = 1, item_per_page: int = 10) -> "Flexmodel.Pagination":
+        if page < 1:
+            page = 1
 
-        if position_limit < 1:
-            position_limit = 10
+        if item_per_page < 1:
+            item_per_page = 10
 
-        cursor = cls.collection().find(queries).skip((position - 1) * position_limit).limit(position_limit)
+        total_items = 0
+        items: list["Flexmodel"] = []
 
-        return Flexmodel.Pagination(
-            position=position,
-            position_limit=position_limit,
-            total_items=cls.collection().count_documents(queries),
-            items=[cls(**document) for document in cursor],
-        )
+        try:
+            if cls.is_mongodb and (collection := cls.database[cls.table_name]):
+                if c := collection.find(queries).skip((page - 1) * item_per_page).limit(item_per_page):
+                    total_items = collection.count_documents(queries)
+                    items = [cls(**document) for document in c]
+            elif cls.is_sqlitedb and (c := cls.database.cursor()):
+                params = []
+                conditions = []
+
+                for key, value in queries.items():
+                    conditions.append(f"json_extract(document, '$.{key}') = ?")
+                    params.append(json.dumps(value) if not isinstance(value, (str, int, float)) else value)
+
+                where_clause = " AND ".join(conditions) if conditions else "1=1"
+
+                if c.execute(f"SELECT COUNT(*) FROM {cls.table_name} WHERE {where_clause}", params):
+                    total_items = c.fetchone()[0]
+
+                offset = (page - 1) * item_per_page
+
+                if c.execute(f"SELECT document FROM {cls.table_name} WHERE {where_clause} LIMIT ? OFFSET ?", params + [item_per_page, offset]):
+                    items = [cls(**json.loads(item[0])) for item in c.fetchall()]
+        except Exception as e:
+            FlexmodelException.silent_log(f"Fetch all error: {e}")
+
+        return Flexmodel.Pagination(page=page, item_per_page=item_per_page, total_items=total_items, items=items)
 
     class Pagination:
-        def __init__(self, *, position: int, position_limit: int, total_items: int, items: list["Flexmodel"]):
-            self.position: int = position
-            self.position_limit: int = position_limit
+        def __init__(self, *, page: int, item_per_page: int, total_items: int, items: list["Flexmodel"]):
+            self.page: int = page
+            self.item_per_page: int = item_per_page
             self.total_items: int = total_items
             self.items: list["Flexmodel"] = items
 
@@ -335,214 +466,8 @@ class Flexmodel(Flex):
         def to_dict(self) -> dict[str, Any]:
             return {
                 "metadata": {
-                    "position": self.position,
-                    "position_limit": self.position_limit,
-                    "total_items": self.total_items,
-                },
-                "items": [item.to_dict() for item in self.items],
-            }
-
-
-class FlexmodelSQLite(Flex):
-    schema: Schema = Schema.ident()
-    database: Optional[sqlite3.Connection] = None
-    table_name: str = "not_defined"
-
-    @property
-    def id(self) -> str:
-        # If _id is not set or is the shared default from schema, generate a new unique one
-        if "_id" not in self.__dict__ or self.__dict__["_id"] == self.schema["_id"].default:
-            self.__dict__["_id"] = str(uuid.uuid4())
-        return self.__dict__["_id"]
-
-    @property
-    def updated_at(self) -> str:
-        return self.__dict__.get("_updated_at", datetime.now(timezone.utc).isoformat())
-
-    def update(self, **data: Any):
-        # Call parent update
-        result = super().update(**data)
-        
-        # If _id was not explicitly provided in data and got set to schema default, ensure it's unique
-        if "_id" not in data and self.__dict__.get("_id") == self.schema["_id"].default:
-            # Access id property to ensure a unique ID is generated
-            _ = self.id
-        
-        return result
-
-    def commit(self, commit_all: bool = True) -> bool:
-        if not self.is_schematic():
-            return False
-
-        if commit_all:
-            for item in [item for _, item in self.__dict__.items() if isinstance(item, FlexmodelSQLite)]:
-                if not item.commit():
-                    return False
-
-        self.update(_updated_at=datetime.now(timezone.utc).isoformat())
-
-        cursor = self._get_cursor()
-        try:
-            # Convert the model to JSON for storage
-            document_json = json.dumps(self.to_dict(commit=commit_all), ensure_ascii=False)
-            
-            # Insert or replace the record
-            cursor.execute(
-                f"INSERT OR REPLACE INTO {self.table_name} (_id, _updated_at, document) VALUES (?, ?, ?)",
-                (self.id, self.updated_at, document_json)
-            )
-            self.database.commit()
-            return True
-        except Exception:
-            return False
-
-    def delete(self) -> bool:
-        cursor = self._get_cursor()
-        try:
-            cursor.execute(f"DELETE FROM {self.table_name} WHERE _id = ?", (self.id,))
-            self.database.commit()
-            return cursor.rowcount > 0
-        except Exception:
-            return False
-
-    @classmethod
-    def attach(cls, database: sqlite3.Connection, table_name: Optional[str] = None):
-        cls.database = database
-
-        if not table_name:
-            cls.table_name = cls.__name__.lower() + "s"
-        else:
-            cls.table_name = table_name
-
-        # Create table if it doesn't exist
-        cursor = cls.database.cursor()
-        cursor.execute(f"""
-            CREATE TABLE IF NOT EXISTS {cls.table_name} (
-                _id TEXT PRIMARY KEY,
-                _updated_at TEXT NOT NULL,
-                document TEXT NOT NULL
-            )
-        """)
-        cls.database.commit()
-
-    @classmethod
-    def detach(cls):
-        if cls.database:
-            cls.database.close()
-        cls.database = None
-        cls.table_name = "not_defined"
-
-    @classmethod
-    def _get_cursor(cls) -> sqlite3.Cursor:
-        if cls.database is None:
-            raise Exception(f"FlexmodelSQLite '{cls.__name__}': has no database attached. Use '{cls.__name__}.attach(database, table_name)' to attach a database.")
-        return cls.database.cursor()
-
-    @classmethod
-    def load(cls, _id: str) -> Optional["FlexmodelSQLite"]:
-        cursor = cls._get_cursor()
-        cursor.execute(f"SELECT document FROM {cls.table_name} WHERE _id = ?", (_id,))
-        row = cursor.fetchone()
-        
-        if row:
-            document = json.loads(row[0])
-            return cls(**document)
-        return None
-
-    @classmethod
-    def count(cls) -> int:
-        cursor = cls._get_cursor()
-        cursor.execute(f"SELECT COUNT(*) FROM {cls.table_name}")
-        return cursor.fetchone()[0]
-
-    @classmethod
-    def truncate(cls):
-        cursor = cls._get_cursor()
-        cursor.execute(f"DELETE FROM {cls.table_name}")
-        cls.database.commit()
-
-    @classmethod
-    def fetch(cls, queries: dict[str, Any]) -> Optional["FlexmodelSQLite"]:
-        cursor = cls._get_cursor()
-        
-        # Build WHERE clause from queries
-        conditions = []
-        params = []
-        for key, value in queries.items():
-            conditions.append(f"json_extract(document, '$.{key}') = ?")
-            params.append(json.dumps(value) if not isinstance(value, (str, int, float)) else value)
-        
-        where_clause = " AND ".join(conditions) if conditions else "1=1"
-        cursor.execute(f"SELECT document FROM {cls.table_name} WHERE {where_clause}", params)
-        row = cursor.fetchone()
-        
-        if row:
-            document = json.loads(row[0])
-            return cls(**document)
-        return None
-
-    @classmethod
-    def fetch_all(cls, queries: dict[str, Any] = {}, position: int = 1, position_limit: int = 10) -> "FlexmodelSQLite.Pagination":
-        if position < 1:
-            position = 1
-
-        if position_limit < 1:
-            position_limit = 10
-
-        cursor = cls._get_cursor()
-        
-        # Build WHERE clause from queries
-        conditions = []
-        params = []
-        for key, value in queries.items():
-            conditions.append(f"json_extract(document, '$.{key}') = ?")
-            params.append(json.dumps(value) if not isinstance(value, (str, int, float)) else value)
-        
-        where_clause = " AND ".join(conditions) if conditions else "1=1"
-        
-        # Get total count
-        cursor.execute(f"SELECT COUNT(*) FROM {cls.table_name} WHERE {where_clause}", params)
-        total_items = cursor.fetchone()[0]
-        
-        # Get paginated results
-        offset = (position - 1) * position_limit
-        cursor.execute(
-            f"SELECT document FROM {cls.table_name} WHERE {where_clause} LIMIT ? OFFSET ?",
-            params + [position_limit, offset]
-        )
-        
-        items = [cls(**json.loads(row[0])) for row in cursor.fetchall()]
-        
-        return FlexmodelSQLite.Pagination(
-            position=position,
-            position_limit=position_limit,
-            total_items=total_items,
-            items=items,
-        )
-
-    class Pagination:
-        def __init__(self, *, position: int, position_limit: int, total_items: int, items: list["FlexmodelSQLite"]):
-            self.position: int = position
-            self.position_limit: int = position_limit
-            self.total_items: int = total_items
-            self.items: list["FlexmodelSQLite"] = items
-
-        @property
-        def count(self) -> int:
-            return self.total_items
-
-        def __len__(self) -> int:
-            return self.total_items
-
-        def __iter__(self):
-            for item in self.items:
-                yield item
-
-        def to_dict(self) -> dict[str, Any]:
-            return {
-                "metadata": {
-                    "position": self.position,
-                    "position_limit": self.position_limit,
+                    "page": self.page,
+                    "item_per_page": self.item_per_page,
                     "total_items": self.total_items,
                 },
                 "items": [item.to_dict() for item in self.items],
