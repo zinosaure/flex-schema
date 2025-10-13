@@ -253,6 +253,14 @@ def test_combined_operators():
         for p in products:
             p.commit()
         
+        # Test multiple operators on same field (range query)
+        results = Product.fetch_all({
+            "price": {"$gte": 100, "$lte": 500}
+        })
+        assert len(results.items) == 2, f"Should find 2 products in price range 100-500, got {len(results.items)}"
+        for item in results.items:
+            assert 100 <= item.price <= 500, f"Price should be between 100-500, got {item.price}"
+        
         # Complex query: electronics with price >= 50 OR furniture in stock
         results = Product.fetch_all({
             "$or": [

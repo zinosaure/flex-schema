@@ -254,25 +254,34 @@ def _mongodb_to_sqlite_query(queries: dict[str, Any], table_name: str) -> tuple[
         # Handle MongoDB operators
         if isinstance(value, dict):
             # Check for MongoDB operators
+            operator_conditions = []
+            has_operators = False
+            
             for op_key, op_value in value.items():
                 if op_key == "$gt":
                     params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
-                    return f"json_extract(document, '$.{key}') > ?"
+                    operator_conditions.append(f"json_extract(document, '$.{key}') > ?")
+                    has_operators = True
                 elif op_key == "$gte":
                     params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
-                    return f"json_extract(document, '$.{key}') >= ?"
+                    operator_conditions.append(f"json_extract(document, '$.{key}') >= ?")
+                    has_operators = True
                 elif op_key == "$lt":
                     params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
-                    return f"json_extract(document, '$.{key}') < ?"
+                    operator_conditions.append(f"json_extract(document, '$.{key}') < ?")
+                    has_operators = True
                 elif op_key == "$lte":
                     params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
-                    return f"json_extract(document, '$.{key}') <= ?"
+                    operator_conditions.append(f"json_extract(document, '$.{key}') <= ?")
+                    has_operators = True
                 elif op_key == "$ne":
                     params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
-                    return f"json_extract(document, '$.{key}') != ?"
+                    operator_conditions.append(f"json_extract(document, '$.{key}') != ?")
+                    has_operators = True
                 elif op_key == "$eq":
                     params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
-                    return f"json_extract(document, '$.{key}') = ?"
+                    operator_conditions.append(f"json_extract(document, '$.{key}') = ?")
+                    has_operators = True
                 elif op_key == "$in":
                     if not isinstance(op_value, list):
                         raise ValueError(f"$in operator requires a list, got {type(op_value)}")
@@ -280,7 +289,8 @@ def _mongodb_to_sqlite_query(queries: dict[str, Any], table_name: str) -> tuple[
                     for item in op_value:
                         params.append(json.dumps(item) if not isinstance(item, (str, int, float)) else item)
                         placeholders.append("?")
-                    return f"json_extract(document, '$.{key}') IN ({', '.join(placeholders)})"
+                    operator_conditions.append(f"json_extract(document, '$.{key}') IN ({', '.join(placeholders)})")
+                    has_operators = True
                 elif op_key == "$nin":
                     if not isinstance(op_value, list):
                         raise ValueError(f"$nin operator requires a list, got {type(op_value)}")
@@ -288,12 +298,21 @@ def _mongodb_to_sqlite_query(queries: dict[str, Any], table_name: str) -> tuple[
                     for item in op_value:
                         params.append(json.dumps(item) if not isinstance(item, (str, int, float)) else item)
                         placeholders.append("?")
-                    return f"json_extract(document, '$.{key}') NOT IN ({', '.join(placeholders)})"
+                    operator_conditions.append(f"json_extract(document, '$.{key}') NOT IN ({', '.join(placeholders)})")
+                    has_operators = True
                 elif op_key == "$exists":
                     if op_value:
-                        return f"json_extract(document, '$.{key}') IS NOT NULL"
+                        operator_conditions.append(f"json_extract(document, '$.{key}') IS NOT NULL")
                     else:
-                        return f"json_extract(document, '$.{key}') IS NULL"
+                        operator_conditions.append(f"json_extract(document, '$.{key}') IS NULL")
+                    has_operators = True
+            
+            if has_operators:
+                # Combine multiple operators with AND
+                if len(operator_conditions) > 1:
+                    return f"({' AND '.join(operator_conditions)})"
+                else:
+                    return operator_conditions[0]
             
             # If no MongoDB operators found, treat as regular equality with dict value
             params.append(json.dumps(value))
