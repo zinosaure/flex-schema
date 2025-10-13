@@ -238,11 +238,11 @@ class Flexmodel(Flex):
 
     @property
     def is_mongodb(self) -> bool:
-        return self.database_engine == "mongodb"
+        return self.__class__.database_engine == "mongodb"
 
     @property
     def is_sqlitedb(self) -> bool:
-        return self.database_engine == "sqlite3"
+        return self.__class__.database_engine == "sqlite3"
 
     @property
     def id(self) -> str:
@@ -321,9 +321,9 @@ class Flexmodel(Flex):
         cls.table_name = table_name or cls.__name__.lower() + "s"
 
         try:
-            if cls.is_mongodb and (collection := cls.database[cls.table_name]):
+            if cls.database_engine == "mongodb" and (collection := cls.database[cls.table_name]):
                 collection.create_index("_id", unique=True)
-            elif cls.is_sqlitedb and (c := cls.database.cursor()):
+            elif cls.database_engine == "sqlite3" and (c := cls.database.cursor()):
                 c.execute(
                     f"""
                         CREATE TABLE IF NOT EXISTS {cls.table_name} (
@@ -339,7 +339,7 @@ class Flexmodel(Flex):
 
     @classmethod
     def detach(cls):
-        if cls.is_sqlitedb:
+        if cls.database_engine == "sqlite3":
             cls.database.close()
 
         cls.database = sqlite3.Connection(":memory:")
@@ -348,10 +348,10 @@ class Flexmodel(Flex):
     @classmethod
     def load(cls, _id: str) -> Optional["Flexmodel"]:
         try:
-            if cls.is_mongodb and (collection := cls.database[cls.table_name]):
+            if cls.database_engine == "mongodb" and (collection := cls.database[cls.table_name]):
                 if document := collection.find_one({"_id": _id}):
                     return cls(**document)
-            elif cls.is_sqlitedb and (c := cls.database.cursor()):
+            elif cls.database_engine == "sqlite3" and (c := cls.database.cursor()):
                 c.execute(f"SELECT document FROM {cls.table_name} WHERE _id = ?", (_id,))
 
                 if (item := c.fetchone()) and (document := json.loads(item[0])):
@@ -362,9 +362,9 @@ class Flexmodel(Flex):
     @classmethod
     def count(cls) -> int:
         try:
-            if cls.is_mongodb and (collection := cls.database[cls.table_name]):
+            if cls.database_engine == "mongodb" and (collection := cls.database[cls.table_name]):
                 return collection.count_documents({})
-            elif cls.is_sqlitedb and (c := cls.database.cursor()):
+            elif cls.database_engine == "sqlite3" and (c := cls.database.cursor()):
                 c.execute(f"SELECT COUNT(*) FROM {cls.table_name}")
 
                 if item := c.fetchone():
@@ -377,9 +377,9 @@ class Flexmodel(Flex):
     @classmethod
     def truncate(cls):
         try:
-            if cls.is_mongodb and (collection := cls.database[cls.table_name]):
+            if cls.database_engine == "mongodb" and (collection := cls.database[cls.table_name]):
                 collection.drop()
-            elif cls.is_sqlitedb and (c := cls.database.cursor()):
+            elif cls.database_engine == "sqlite3" and (c := cls.database.cursor()):
                 c.execute(f"DELETE FROM {cls.table_name}")
                 cls.database.commit()
         except Exception as e:
@@ -388,10 +388,10 @@ class Flexmodel(Flex):
     @classmethod
     def fetch(cls, queries: dict[str, Any]) -> Optional["Flexmodel"]:
         try:
-            if cls.is_mongodb and (collection := cls.database[cls.table_name]):
+            if cls.database_engine == "mongodb" and (collection := cls.database[cls.table_name]):
                 if document := collection.find_one(queries):
                     return cls(**document)
-            elif cls.is_sqlitedb and (c := cls.database.cursor()):
+            elif cls.database_engine == "sqlite3" and (c := cls.database.cursor()):
                 params = []
                 conditions = []
 
@@ -419,11 +419,11 @@ class Flexmodel(Flex):
         items: list["Flexmodel"] = []
 
         try:
-            if cls.is_mongodb and (collection := cls.database[cls.table_name]):
+            if cls.database_engine == "mongodb" and (collection := cls.database[cls.table_name]):
                 if c := collection.find(queries).skip((page - 1) * item_per_page).limit(item_per_page):
                     total_items = collection.count_documents(queries)
                     items = [cls(**document) for document in c]
-            elif cls.is_sqlitedb and (c := cls.database.cursor()):
+            elif cls.database_engine == "sqlite3" and (c := cls.database.cursor()):
                 params = []
                 conditions = []
 
@@ -493,3 +493,7 @@ def field_constraint(
 
 def default(flex: Flex | Flexmodel, name: str) -> Any:
     return flex.schema[name].default
+
+
+# Alias for backward compatibility
+FlexmodelSQLite = Flexmodel

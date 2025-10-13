@@ -53,7 +53,7 @@ def test_basic_sqlite_operations():
         assert fetched.price == 29.99, "Fetched product price mismatch"
         
         # Test fetch_all
-        pagination = Product.fetch_all({}, position=1, position_limit=10)
+        pagination = Product.fetch_all({}, page=1, item_per_page=10)
         assert len(pagination.items) == 2, "fetch_all should return 2 items"
         assert pagination.total_items == 2, "Total items should be 2"
         
@@ -229,21 +229,21 @@ def test_pagination():
             item.commit()
         
         # Test first page
-        page1 = Item.fetch_all({}, position=1, position_limit=5)
+        page1 = Item.fetch_all({}, page=1, item_per_page=5)
         assert len(page1.items) == 5, "First page should have 5 items"
         assert page1.total_items == 15, "Total should be 15"
-        assert page1.position == 1, "Position should be 1"
+        assert page1.page == 1, "Page should be 1"
         
         # Test second page
-        page2 = Item.fetch_all({}, position=2, position_limit=5)
+        page2 = Item.fetch_all({}, page=2, item_per_page=5)
         assert len(page2.items) == 5, "Second page should have 5 items"
         
         # Test last page
-        page3 = Item.fetch_all({}, position=3, position_limit=5)
+        page3 = Item.fetch_all({}, page=3, item_per_page=5)
         assert len(page3.items) == 5, "Third page should have 5 items"
         
         # Test page beyond limit
-        page4 = Item.fetch_all({}, position=4, position_limit=5)
+        page4 = Item.fetch_all({}, page=4, item_per_page=5)
         assert len(page4.items) == 0, "Fourth page should be empty"
         
         conn.close()
