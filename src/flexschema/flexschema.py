@@ -230,6 +230,132 @@ class Flex:
         return json.dumps(self.to_dict(commit), indent=indent, ensure_ascii=False)
 
 
+def _mongodb_to_sqlite_query(queries: dict[str, Any], table_name: str) -> tuple[str, list[Any]]:
+    """
+    Convert MongoDB-style queries to SQLite JSON queries.
+    
+    Supports:
+    - Simple equality: {"name": "John"}
+    - Comparison operators: {"age": {"$gt": 18}}
+    - Logical operators: {"$or": [{"age": {"$lt": 18}}, {"age": {"$gt": 65}}]}
+    - Array operators: {"status": {"$in": ["active", "pending"]}}
+    - Existence operator: {"email": {"$exists": True}}
+    
+    Returns:
+        tuple: (where_clause, params) for use in SQLite query
+    """
+    params = []
+    conditions = []
+    
+    def process_value(key: str, value: Any, is_nested: bool = False) -> str:
+        """Process a single key-value pair and return the SQL condition."""
+        nonlocal params
+        
+        # Handle MongoDB operators
+        if isinstance(value, dict):
+            # Check for MongoDB operators
+            for op_key, op_value in value.items():
+                if op_key == "$gt":
+                    params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
+                    return f"json_extract(document, '$.{key}') > ?"
+                elif op_key == "$gte":
+                    params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
+                    return f"json_extract(document, '$.{key}') >= ?"
+                elif op_key == "$lt":
+                    params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
+                    return f"json_extract(document, '$.{key}') < ?"
+                elif op_key == "$lte":
+                    params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
+                    return f"json_extract(document, '$.{key}') <= ?"
+                elif op_key == "$ne":
+                    params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
+                    return f"json_extract(document, '$.{key}') != ?"
+                elif op_key == "$eq":
+                    params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
+                    return f"json_extract(document, '$.{key}') = ?"
+                elif op_key == "$in":
+                    if not isinstance(op_value, list):
+                        raise ValueError(f"$in operator requires a list, got {type(op_value)}")
+                    placeholders = []
+                    for item in op_value:
+                        params.append(json.dumps(item) if not isinstance(item, (str, int, float)) else item)
+                        placeholders.append("?")
+                    return f"json_extract(document, '$.{key}') IN ({', '.join(placeholders)})"
+                elif op_key == "$nin":
+                    if not isinstance(op_value, list):
+                        raise ValueError(f"$nin operator requires a list, got {type(op_value)}")
+                    placeholders = []
+                    for item in op_value:
+                        params.append(json.dumps(item) if not isinstance(item, (str, int, float)) else item)
+                        placeholders.append("?")
+                    return f"json_extract(document, '$.{key}') NOT IN ({', '.join(placeholders)})"
+                elif op_key == "$exists":
+                    if op_value:
+                        return f"json_extract(document, '$.{key}') IS NOT NULL"
+                    else:
+                        return f"json_extract(document, '$.{key}') IS NULL"
+            
+            # If no MongoDB operators found, treat as regular equality with dict value
+            params.append(json.dumps(value))
+            return f"json_extract(document, '$.{key}') = ?"
+        else:
+            # Simple equality
+            params.append(json.dumps(value) if not isinstance(value, (str, int, float)) else value)
+            return f"json_extract(document, '$.{key}') = ?"
+    
+    def process_logical_operator(op: str, conditions_list: list) -> str:
+        """Process logical operators like $and, $or, $not."""
+        nonlocal params
+        
+        if op == "$and":
+            sub_conditions = []
+            for condition_dict in conditions_list:
+                for k, v in condition_dict.items():
+                    if k.startswith("$"):
+                        sub_conditions.append(process_logical_operator(k, v))
+                    else:
+                        sub_conditions.append(process_value(k, v))
+            return f"({' AND '.join(sub_conditions)})" if sub_conditions else "1=1"
+        
+        elif op == "$or":
+            sub_conditions = []
+            for condition_dict in conditions_list:
+                for k, v in condition_dict.items():
+                    if k.startswith("$"):
+                        sub_conditions.append(process_logical_operator(k, v))
+                    else:
+                        sub_conditions.append(process_value(k, v))
+            return f"({' OR '.join(sub_conditions)})" if sub_conditions else "1=1"
+        
+        elif op == "$not":
+            # $not is typically used with a single condition
+            if isinstance(conditions_list, dict):
+                sub_conditions = []
+                for k, v in conditions_list.items():
+                    if k.startswith("$"):
+                        sub_conditions.append(process_logical_operator(k, v))
+                    else:
+                        sub_conditions.append(process_value(k, v))
+                return f"NOT ({' AND '.join(sub_conditions)})" if sub_conditions else "1=1"
+        
+        return "1=1"
+    
+    # Process the queries
+    for key, value in queries.items():
+        if key.startswith("$"):
+            # Logical operator at root level
+            if key in ("$and", "$or"):
+                conditions.append(process_logical_operator(key, value))
+            elif key == "$not":
+                conditions.append(process_logical_operator(key, value))
+        else:
+            # Regular field query
+            conditions.append(process_value(key, value))
+    
+    where_clause = " AND ".join(conditions) if conditions else "1=1"
+    return where_clause, params
+
+
 class Flexmodel(Flex):
     schema: Schema = Schema.ident()
     database: pymongo.MongoClient | sqlite3.Connection = sqlite3.Connection(":memory:")
@@ -392,14 +518,7 @@ class Flexmodel(Flex):
                 if document := collection.find_one(queries):
                     return cls(**document)
             elif cls.database_engine == "sqlite3" and (c := cls.database.cursor()):
-                params = []
-                conditions = []
-
-                for key, value in queries.items():
-                    params.append(json.dumps(value) if not isinstance(value, (str, int, float)) else value)
-                    conditions.append(f"json_extract(document, '$.{key}') = ?")
-
-                where_clause = " AND ".join(conditions) if conditions else "1=1"
+                where_clause, params = _mongodb_to_sqlite_query(queries, cls.table_name)
                 c.execute(f"SELECT document FROM {cls.table_name} WHERE {where_clause} LIMIT 1", params)
 
                 if (item := c.fetchone()) and (document := json.loads(item[0])):
@@ -424,14 +543,7 @@ class Flexmodel(Flex):
                     total_items = collection.count_documents(queries)
                     items = [cls(**document) for document in c]
             elif cls.database_engine == "sqlite3" and (c := cls.database.cursor()):
-                params = []
-                conditions = []
-
-                for key, value in queries.items():
-                    conditions.append(f"json_extract(document, '$.{key}') = ?")
-                    params.append(json.dumps(value) if not isinstance(value, (str, int, float)) else value)
-
-                where_clause = " AND ".join(conditions) if conditions else "1=1"
+                where_clause, params = _mongodb_to_sqlite_query(queries, cls.table_name)
 
                 if c.execute(f"SELECT COUNT(*) FROM {cls.table_name} WHERE {where_clause}", params):
                     total_items = c.fetchone()[0]
