@@ -156,7 +156,7 @@ product.commit()
 - `collection()`: Get the MongoDB collection
 - `load(_id)`: Load a document by ID
 - `fetch(queries)`: Find one document matching queries
-- `fetch_all(queries={}, position=1, position_limit=10)`: Get paginated results
+- `fetch_all(queries={}, page=1, item_per_page=10)`: Get paginated results
 - `count()`: Count documents in collection
 - `truncate()`: Drop the collection
 
@@ -208,7 +208,7 @@ FlexmodelSQLite stores data in tables with the following structure:
 - `detach()`: Disconnect from SQLite database
 - `load(_id)`: Load a document by ID
 - `fetch(queries)`: Find one document matching queries
-- `fetch_all(queries={}, position=1, position_limit=10)`: Get paginated results
+- `fetch_all(queries={}, page=1, item_per_page=10)`: Get paginated results
 - `count()`: Count documents in table
 - `truncate()`: Delete all records from table
 
@@ -365,12 +365,12 @@ user = User.fetch({"email": "john@example.com"})
 # Get first page (10 items by default)
 pagination = User.fetch_all(
     queries={"is_active": True},
-    position=1,
-    position_limit=20
+    page=1,
+    item_per_page=20
 )
 
 print(f"Total items: {pagination.total_items}")
-print(f"Current page: {pagination.position}")
+print(f"Current page: {pagination.page}")
 
 for user in pagination:
     print(user.name)
@@ -378,6 +378,113 @@ for user in pagination:
 # Convert to dict
 result = pagination.to_dict()
 ```
+
+### MongoDB Query Operators
+
+Both MongoDB and SQLite backends support MongoDB-style query operators for advanced filtering:
+
+#### Comparison Operators
+
+```python
+# Greater than ($gt)
+products = Product.fetch_all({"price": {"$gt": 100}})
+
+# Greater than or equal ($gte)
+products = Product.fetch_all({"quantity": {"$gte": 10}})
+
+# Less than ($lt)
+products = Product.fetch_all({"price": {"$lt": 50}})
+
+# Less than or equal ($lte)
+products = Product.fetch_all({"age": {"$lte": 30}})
+
+# Not equal ($ne)
+users = User.fetch_all({"status": {"$ne": "inactive"}})
+
+# Equal ($eq) - explicit equality
+user = User.fetch({"email": {"$eq": "john@example.com"}})
+```
+
+#### Array Operators
+
+```python
+# In array ($in)
+products = Product.fetch_all({
+    "category": {"$in": ["electronics", "computers"]}
+})
+
+# Not in array ($nin)
+users = User.fetch_all({
+    "role": {"$nin": ["admin", "moderator"]}
+})
+```
+
+#### Logical Operators
+
+```python
+# OR operator ($or)
+products = Product.fetch_all({
+    "$or": [
+        {"price": {"$lt": 50}},
+        {"price": {"$gt": 1000}}
+    ]
+})
+
+# AND operator ($and) - explicit, usually implicit
+products = Product.fetch_all({
+    "$and": [
+        {"category": "electronics"},
+        {"in_stock": True}
+    ]
+})
+
+# Implicit AND (default behavior)
+products = Product.fetch_all({
+    "category": "electronics",
+    "in_stock": True
+})
+```
+
+#### Existence Operator
+
+```python
+# Field exists ($exists)
+users = User.fetch_all({"phone": {"$exists": True}})
+
+# Field does not exist
+users = User.fetch_all({"phone": {"$exists": False}})
+```
+
+#### Combined Queries
+
+```python
+# Complex query combining multiple operators
+results = Product.fetch_all({
+    "$or": [
+        {
+            "$and": [
+                {"category": "electronics"},
+                {"price": {"$gte": 100}}
+            ]
+        },
+        {
+            "$and": [
+                {"category": "furniture"},
+                {"in_stock": True}
+            ]
+        }
+    ]
+})
+
+# Multiple conditions with operators
+users = User.fetch_all({
+    "age": {"$gte": 18, "$lt": 65},
+    "status": {"$in": ["active", "pending"]},
+    "role": {"$ne": "guest"}
+})
+```
+
+**Note:** All query operators work identically for both MongoDB and SQLite backends, ensuring seamless migration between database systems.
 
 ### Count and Truncate
 
