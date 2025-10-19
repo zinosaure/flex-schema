@@ -5,11 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "flexschema"
 version = "0.1.0"
-description = "Flex-Schema for MongoDB"
+description = "Flex-Schema for MongoDB with ORM-style query API"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
-keywords = ["module", "namespace"]
+keywords = ["mongodb", "orm", "schema", "validation"]
 authors = [{ name = "Gino D. (@zinosaure)", email = "zinosaure@outlook.com" }]
 dependencies = ["mongo", "pymongo"]
 classifiers = [
