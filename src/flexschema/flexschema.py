@@ -2,7 +2,6 @@ import re
 import json
 import uuid
 import logging
-import sqlite3
 import pymongo
 
 from datetime import datetime, timezone
@@ -11,7 +10,6 @@ from typing import Any, Callable, Optional, Type
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("pymongo").setLevel(logging.WARNING)
-logging.getLogger("sqlite3").setLevel(logging.WARNING)
 
 
 class SchemaDefinitionException(Exception):
@@ -70,12 +68,10 @@ class Schema:
 
     def add_field(self, name: str, field: "Schema.Field"):
         if not isinstance(field.type, type):
-            raise SchemaDefinitionException(f"Field '{name}': has not a valid type.")
+            raise SchemaDefinitionException(f"Field '{name}': is not instance of 'type'.")
 
         # Check if type is a primitive or a subclass of Flex
-        is_valid_type = field.type in (str, int, float, bool, list, tuple) or (hasattr(field.type, "__mro__") and any(base.__name__ == "Flex" for base in field.type.__mro__))
-
-        if not is_valid_type:
+        if not (field.type in (str, int, float, bool, list, tuple) or (hasattr(field.type, "__mro__") and any(base.__name__ == "Flex" for base in field.type.__mro__))):
             raise SchemaDefinitionException(f"Field '{name}': has not a valid type '{field.type.__name__}'.")
 
         if field.type in (list, tuple) and field.constraint and field.constraint.item_type is None:
@@ -156,8 +152,6 @@ class Schema:
                     return f"Field '{self.name}': must be less than or equal to: {self.constraint.max_length}."
 
             if self.constraint.pattern and isinstance(value, str):
-                import re
-
                 if not re.match(self.constraint.pattern, value):
                     return f"Field '{self.name}': must match the pattern: '{self.constraint.pattern}'."
 
@@ -175,8 +169,9 @@ class Flex:
     def __init__(self, **data: Any):
         self.update(**data)
 
-    def is_schematic(self) -> bool:
-        return self.schema.is_submittable(self.__dict__)
+    @property
+    def default(self) -> dict[str, Any]:
+        return {name: field.default for name, field in self.schema.fields.items()}
 
     def update(self, **data: Any):
         for name, field in self.schema:
@@ -230,164 +225,10 @@ class Flex:
         return json.dumps(self.to_dict(commit), indent=indent, ensure_ascii=False)
 
 
-def _mongodb_to_sqlite_query(queries: dict[str, Any], table_name: str) -> tuple[str, list[Any]]:
-    """
-    Convert MongoDB-style queries to SQLite JSON queries.
-    
-    Supports:
-    - Simple equality: {"name": "John"}
-    - Comparison operators: {"age": {"$gt": 18}}
-    - Logical operators: {"$or": [{"age": {"$lt": 18}}, {"age": {"$gt": 65}}]}
-    - Array operators: {"status": {"$in": ["active", "pending"]}}
-    - Existence operator: {"email": {"$exists": True}}
-    
-    Returns:
-        tuple: (where_clause, params) for use in SQLite query
-    """
-    params = []
-    conditions = []
-    
-    def process_value(key: str, value: Any, is_nested: bool = False) -> str:
-        """Process a single key-value pair and return the SQL condition."""
-        nonlocal params
-        
-        # Handle MongoDB operators
-        if isinstance(value, dict):
-            # Check for MongoDB operators
-            operator_conditions = []
-            has_operators = False
-            
-            for op_key, op_value in value.items():
-                if op_key == "$gt":
-                    params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
-                    operator_conditions.append(f"json_extract(document, '$.{key}') > ?")
-                    has_operators = True
-                elif op_key == "$gte":
-                    params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
-                    operator_conditions.append(f"json_extract(document, '$.{key}') >= ?")
-                    has_operators = True
-                elif op_key == "$lt":
-                    params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
-                    operator_conditions.append(f"json_extract(document, '$.{key}') < ?")
-                    has_operators = True
-                elif op_key == "$lte":
-                    params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
-                    operator_conditions.append(f"json_extract(document, '$.{key}') <= ?")
-                    has_operators = True
-                elif op_key == "$ne":
-                    params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
-                    operator_conditions.append(f"json_extract(document, '$.{key}') != ?")
-                    has_operators = True
-                elif op_key == "$eq":
-                    params.append(json.dumps(op_value) if not isinstance(op_value, (str, int, float)) else op_value)
-                    operator_conditions.append(f"json_extract(document, '$.{key}') = ?")
-                    has_operators = True
-                elif op_key == "$in":
-                    if not isinstance(op_value, list):
-                        raise ValueError(f"$in operator requires a list, got {type(op_value)}")
-                    placeholders = []
-                    for item in op_value:
-                        params.append(json.dumps(item) if not isinstance(item, (str, int, float)) else item)
-                        placeholders.append("?")
-                    operator_conditions.append(f"json_extract(document, '$.{key}') IN ({', '.join(placeholders)})")
-                    has_operators = True
-                elif op_key == "$nin":
-                    if not isinstance(op_value, list):
-                        raise ValueError(f"$nin operator requires a list, got {type(op_value)}")
-                    placeholders = []
-                    for item in op_value:
-                        params.append(json.dumps(item) if not isinstance(item, (str, int, float)) else item)
-                        placeholders.append("?")
-                    operator_conditions.append(f"json_extract(document, '$.{key}') NOT IN ({', '.join(placeholders)})")
-                    has_operators = True
-                elif op_key == "$exists":
-                    if op_value:
-                        operator_conditions.append(f"json_extract(document, '$.{key}') IS NOT NULL")
-                    else:
-                        operator_conditions.append(f"json_extract(document, '$.{key}') IS NULL")
-                    has_operators = True
-            
-            if has_operators:
-                # Combine multiple operators with AND
-                if len(operator_conditions) > 1:
-                    return f"({' AND '.join(operator_conditions)})"
-                else:
-                    return operator_conditions[0]
-            
-            # If no MongoDB operators found, treat as regular equality with dict value
-            params.append(json.dumps(value))
-            return f"json_extract(document, '$.{key}') = ?"
-        else:
-            # Simple equality
-            params.append(json.dumps(value) if not isinstance(value, (str, int, float)) else value)
-            return f"json_extract(document, '$.{key}') = ?"
-    
-    def process_logical_operator(op: str, conditions_list: list) -> str:
-        """Process logical operators like $and, $or, $not."""
-        nonlocal params
-        
-        if op == "$and":
-            sub_conditions = []
-            for condition_dict in conditions_list:
-                for k, v in condition_dict.items():
-                    if k.startswith("$"):
-                        sub_conditions.append(process_logical_operator(k, v))
-                    else:
-                        sub_conditions.append(process_value(k, v))
-            return f"({' AND '.join(sub_conditions)})" if sub_conditions else "1=1"
-        
-        elif op == "$or":
-            sub_conditions = []
-            for condition_dict in conditions_list:
-                for k, v in condition_dict.items():
-                    if k.startswith("$"):
-                        sub_conditions.append(process_logical_operator(k, v))
-                    else:
-                        sub_conditions.append(process_value(k, v))
-            return f"({' OR '.join(sub_conditions)})" if sub_conditions else "1=1"
-        
-        elif op == "$not":
-            # $not is typically used with a single condition
-            if isinstance(conditions_list, dict):
-                sub_conditions = []
-                for k, v in conditions_list.items():
-                    if k.startswith("$"):
-                        sub_conditions.append(process_logical_operator(k, v))
-                    else:
-                        sub_conditions.append(process_value(k, v))
-                return f"NOT ({' AND '.join(sub_conditions)})" if sub_conditions else "1=1"
-        
-        return "1=1"
-    
-    # Process the queries
-    for key, value in queries.items():
-        if key.startswith("$"):
-            # Logical operator at root level
-            if key in ("$and", "$or"):
-                conditions.append(process_logical_operator(key, value))
-            elif key == "$not":
-                conditions.append(process_logical_operator(key, value))
-        else:
-            # Regular field query
-            conditions.append(process_value(key, value))
-    
-    where_clause = " AND ".join(conditions) if conditions else "1=1"
-    return where_clause, params
-
-
 class Flexmodel(Flex):
     schema: Schema = Schema.ident()
-    database: pymongo.MongoClient | sqlite3.Connection = sqlite3.Connection(":memory:")
-    database_engine: str = "sqlite3"  # or "mongodb"
-    table_name: str = "not_defined"
-
-    @property
-    def is_mongodb(self) -> bool:
-        return self.__class__.database_engine == "mongodb"
-
-    @property
-    def is_sqlitedb(self) -> bool:
-        return self.__class__.database_engine == "sqlite3"
+    database: pymongo.MongoClient
+    collection_name: str = "collections"
 
     @property
     def id(self) -> str:
@@ -408,8 +249,11 @@ class Flexmodel(Flex):
 
         return result
 
+    def is_committable(self) -> bool:
+        return self.schema.is_submittable(self.__dict__)
+
     def commit(self, commit_all: bool = True) -> bool:
-        if not self.is_schematic():
+        if not self.is_committable():
             return False
 
         if commit_all:
@@ -419,190 +263,304 @@ class Flexmodel(Flex):
 
         self.update(_updated_at=datetime.now(timezone.utc).isoformat())
 
-        try:
-            if self.is_mongodb and (collection := self.database[self.table_name]):
-                return collection.replace_one({"_id": self.id}, self.to_dict(commit=commit_all), upsert=True).acknowledged
-            elif self.is_sqlitedb and (c := self.database.cursor()):
-                c.execute(
-                    f"""
-                        INSERT OR REPLACE INTO {self.table_name} 
-                            (_id, _updated_at, document) 
-                        VALUES (?, ?, ?);
-                    """,
-                    (self.id, self.updated_at, json.dumps(self.to_dict(commit=commit_all), ensure_ascii=False)),
-                )
-                self.database.commit()
-
-                return True
-        except Exception as e:
-            FlexmodelException.silent_log(f"Commit error: {e}")
+        if collection := self.database[self.collection_name]:
+            return collection.replace_one({"_id": self.id}, self.to_dict(commit=commit_all), upsert=True).acknowledged
 
         return False
 
     def delete(self) -> bool:
-        try:
-            if self.is_mongodb and (collection := self.database[self.table_name]):
-                return collection.delete_one({"_id": self.id}).deleted_count > 0
-            elif self.is_sqlitedb and (c := self.database.cursor()):
-                c.execute(f"DELETE FROM {self.table_name} WHERE _id = ?", (self.id,))
-                self.database.commit()
-
-                return c.rowcount > 0
-        except Exception as e:
-            FlexmodelException.silent_log(f"Delete error: {e}")
+        if collection := self.database[self.collection_name]:
+            return collection.delete_one({"_id": self.id}).deleted_count > 0
 
         return False
 
     @classmethod
-    def attach(cls, database: pymongo.MongoClient | sqlite3.Connection, table_name: Optional[str] = None):
-        if isinstance(database, pymongo.MongoClient):
-            cls.database_engine = "mongodb"
-        elif isinstance(database, sqlite3.Connection):
-            cls.database_engine = "sqlite3"
-        else:
-            raise FlexmodelException("Cannot attach to the database: invalid database type. Only 'pymongo.MongoClient' or 'sqlite3.Connection' are supported.")
+    def attach(cls, database: pymongo.MongoClient, collection_name: Optional[str] = None):
+        if not isinstance(database, pymongo.MongoClient):
+            raise FlexmodelException("Cannot attach to the database: invalid database type. Only 'pymongo.MongoClient' is supported.")
 
         cls.database = database
-        cls.table_name = table_name or cls.__name__.lower() + "s"
+        cls.collection_name = collection_name or cls.__name__.lower() + "s"
 
-        try:
-            if cls.database_engine == "mongodb" and (collection := cls.database[cls.table_name]):
-                collection.create_index("_id", unique=True)
-            elif cls.database_engine == "sqlite3" and (c := cls.database.cursor()):
-                c.execute(
-                    f"""
-                        CREATE TABLE IF NOT EXISTS {cls.table_name} (
-                            _id TEXT PRIMARY KEY,
-                            _updated_at TEXT NOT NULL,
-                            document TEXT NOT NULL
-                        )
-                    """
-                )
-                cls.database.commit()
-        except Exception as e:
-            raise FlexmodelException(f"Cannot create index/table in the database: {e}")
+        if (collection := cls.database[cls.collection_name]) and not collection.index_information().get("_id_"):
+            collection.create_index("_id", unique=True)
 
     @classmethod
     def detach(cls):
-        if cls.database_engine == "sqlite3":
-            cls.database.close()
-
-        cls.database = sqlite3.Connection(":memory:")
-        cls.database_engine = "sqlite3"
+        cls.database = None
+        cls.collection_name = "collections"
 
     @classmethod
-    def load(cls, _id: str) -> Optional["Flexmodel"]:
-        try:
-            if cls.database_engine == "mongodb" and (collection := cls.database[cls.table_name]):
-                if document := collection.find_one({"_id": _id}):
-                    return cls(**document)
-            elif cls.database_engine == "sqlite3" and (c := cls.database.cursor()):
-                c.execute(f"SELECT document FROM {cls.table_name} WHERE _id = ?", (_id,))
-
-                if (item := c.fetchone()) and (document := json.loads(item[0])):
-                    return cls(**document)
-        except Exception as e:
-            FlexmodelException.silent_log(f"Load error: {e}")
+    def load(cls, id: str) -> Optional["Flexmodel"]:
+        if (collection := cls.database[cls.collection_name]) and (document := collection.find_one({"_id": id})):
+            return cls(**document)
 
     @classmethod
     def count(cls) -> int:
-        try:
-            if cls.database_engine == "mongodb" and (collection := cls.database[cls.table_name]):
-                return collection.count_documents({})
-            elif cls.database_engine == "sqlite3" and (c := cls.database.cursor()):
-                c.execute(f"SELECT COUNT(*) FROM {cls.table_name}")
-
-                if item := c.fetchone():
-                    return item[0]
-        except Exception as e:
-            FlexmodelException.silent_log(f"Count error: {e}")
+        if collection := cls.database[cls.collection_name]:
+            return collection.count_documents({})
 
         return 0
 
     @classmethod
-    def truncate(cls):
-        try:
-            if cls.database_engine == "mongodb" and (collection := cls.database[cls.table_name]):
-                collection.drop()
-            elif cls.database_engine == "sqlite3" and (c := cls.database.cursor()):
-                c.execute(f"DELETE FROM {cls.table_name}")
-                cls.database.commit()
-        except Exception as e:
-            FlexmodelException.silent_log(f"Truncate error: {e}")
+    def select(cls) -> "Flexmodel.Select":
+        return Flexmodel.Select(cls())
 
-    @classmethod
-    def fetch(cls, queries: dict[str, Any]) -> Optional["Flexmodel"]:
-        try:
-            if cls.database_engine == "mongodb" and (collection := cls.database[cls.table_name]):
-                if document := collection.find_one(queries):
-                    return cls(**document)
-            elif cls.database_engine == "sqlite3" and (c := cls.database.cursor()):
-                where_clause, params = _mongodb_to_sqlite_query(queries, cls.table_name)
-                c.execute(f"SELECT document FROM {cls.table_name} WHERE {where_clause} LIMIT 1", params)
+    class Select:
+        def __init__(self, model: "Flexmodel"):
+            self.model: "Flexmodel" = model
+            self.sorts: dict[str, Any] = {}
+            self.statements: dict[str, Any] = {}
 
-                if (item := c.fetchone()) and (document := json.loads(item[0])):
-                    return cls(**document)
-        except Exception as e:
-            FlexmodelException.silent_log(f"Fetch error: {e}")
+        def __getattr__(self, name: str) -> "Flexmodel.Select.Statement":
+            if name not in self.model.schema.fields:
+                raise FlexmodelException(f"Select statement: field '{name}' does not exist in the model schema.")
 
-    @classmethod
-    def fetch_all(cls, queries: dict[str, Any] = {}, page: int = 1, item_per_page: int = 10) -> "Flexmodel.Pagination":
-        if page < 1:
-            page = 1
+            return Flexmodel.Select.Statement(name, self.model.__dict__.get(name, self.model.schema[name].default))
 
-        if item_per_page < 1:
-            item_per_page = 10
+        def __getitem__(self, name: str) -> "Flexmodel.Select.Statement":
+            if name not in self.model.schema.fields:
+                raise FlexmodelException(f"Select statement: field '{name}' does not exist in the model schema.")
 
-        total_items = 0
-        items: list["Flexmodel"] = []
-
-        try:
-            if cls.database_engine == "mongodb" and (collection := cls.database[cls.table_name]):
-                if c := collection.find(queries).skip((page - 1) * item_per_page).limit(item_per_page):
-                    total_items = collection.count_documents(queries)
-                    items = [cls(**document) for document in c]
-            elif cls.database_engine == "sqlite3" and (c := cls.database.cursor()):
-                where_clause, params = _mongodb_to_sqlite_query(queries, cls.table_name)
-
-                if c.execute(f"SELECT COUNT(*) FROM {cls.table_name} WHERE {where_clause}", params):
-                    total_items = c.fetchone()[0]
-
-                offset = (page - 1) * item_per_page
-
-                if c.execute(f"SELECT document FROM {cls.table_name} WHERE {where_clause} LIMIT ? OFFSET ?", params + [item_per_page, offset]):
-                    items = [cls(**json.loads(item[0])) for item in c.fetchall()]
-        except Exception as e:
-            FlexmodelException.silent_log(f"Fetch all error: {e}")
-
-        return Flexmodel.Pagination(page=page, item_per_page=item_per_page, total_items=total_items, items=items)
-
-    class Pagination:
-        def __init__(self, *, page: int, item_per_page: int, total_items: int, items: list["Flexmodel"]):
-            self.page: int = page
-            self.item_per_page: int = item_per_page
-            self.total_items: int = total_items
-            self.items: list["Flexmodel"] = items
-
-        @property
-        def count(self) -> int:
-            return self.total_items
+            return Flexmodel.Select.Statement(name, self.model.__dict__.get(name, self.model.schema[name].default))
 
         def __len__(self) -> int:
-            return self.total_items
+            return self.count()
 
         def __iter__(self):
-            for item in self.items:
+            for item in self.fetch_all():
                 yield item
 
-        def to_dict(self) -> dict[str, Any]:
-            return {
-                "metadata": {
-                    "page": self.page,
-                    "item_per_page": self.item_per_page,
-                    "total_items": self.total_items,
-                },
-                "items": [item.to_dict() for item in self.items],
-            }
+        @property
+        def query_string(self) -> str:
+            return json.dumps({"$where": self.statements, "$sort": self.sorts}, indent=4, ensure_ascii=False)
+
+        @property
+        def to_sql(self) -> str:
+            sql: str = "SELECT * FROM " + self.model.collection_name
+
+            if len(self.statements) == 0:
+                return sql
+
+            def parse_condition(condition: dict[str, Any]) -> str:
+                clauses: list[str] = []
+
+                for key, value in condition.items():
+                    if key == "$and":
+                        clauses.append("(" + " AND ".join([parse_condition(item) for item in value]) + ")")
+                    elif key == "$or":
+                        clauses.append("(" + " OR ".join([parse_condition(item) for item in value]) + ")")
+                    elif key == "$not":
+                        clauses.append("NOT (" + parse_condition(value) + ")")
+                    else:
+                        if isinstance(value, dict):
+                            for op, val in value.items():
+                                if op == "$ne":
+                                    clauses.append(f"{key} != '{val}'")
+                                elif op == "$lt":
+                                    clauses.append(f"{key} < '{val}'")
+                                elif op == "$gt":
+                                    clauses.append(f"{key} > '{val}'")
+                                elif op == "$lte":
+                                    clauses.append(f"{key} <= '{val}'")
+                                elif op == "$gte":
+                                    clauses.append(f"{key} >= '{val}'")
+                                elif op == "$in":
+                                    clauses.append(f"{key} IN ({', '.join([json.dumps(v) for v in val])})")
+                                elif op == "$nin":
+                                    clauses.append(f"{key} NOT IN ({', '.join([json.dumps(v) for v in val])})")
+                                elif op == "$regex":
+                                    clauses.append(f"{key} REGEXP '{val}'")
+                                elif op == "$not":
+                                    clauses.append(f"NOT ({parse_condition({key: val})})")
+                        else:
+                            clauses.append(f"{key} = '{value}'")
+
+                return " AND ".join(clauses)
+
+            return sql + " WHERE " + parse_condition(self.statements)
+
+        def match(self, *conditions: dict[str, Any]) -> dict[str, Any]:
+            if len(conditions) == 0:
+                return {}
+
+            return {"$and": list(conditions)}
+
+        def not_match(self, *conditions: dict[str, Any]) -> dict[str, Any]:
+            if len(conditions) == 0:
+                return {}
+
+            return {"$not": {"$and": list(conditions)}}
+
+        def at_least(self, *conditions: dict[str, Any]) -> dict[str, Any]:
+            if len(conditions) == 0:
+                return {}
+
+            return {"$or": list(conditions)}
+
+        def not_at_least(self, *conditions: dict[str, Any]) -> dict[str, Any]:
+            if len(conditions) == 0:
+                return {}
+
+            return {"$not": {"$or": list(conditions)}}
+
+        def where(self, *conditions: dict[str, Any]):
+            for condition in conditions:
+                for logical, value in condition.items():
+                    self.statements[logical] = value
+
+        def sort(self, *conditions: dict[str, Any]):
+            if len(conditions) == 0:
+                return
+
+            for condition in conditions:
+                for logical, value in condition.items():
+                    self.sorts[logical] = value
+
+        def discard(self):
+            self.sorts = {}
+            self.statements = {}
+
+        def count(self) -> int:
+            if collection := self.model.database[self.model.collection_name]:
+                return collection.count_documents(self.statements)
+
+            return 0
+
+        def fetch(self) -> Optional["Flexmodel"]:
+            if collection := self.model.database[self.model.collection_name]:
+                if document := collection.find_one(self.statements):
+                    return self.model.__class__(**document)
+
+        def fetch_all(self, current: int = 1, results_per_page: int = 10) -> "Flexmodel.Select.Pagination":
+            count: int = 0
+            results: list["Flexmodel"] = []
+
+            if current < 1:
+                current = 1
+
+            if results_per_page < 1:
+                results_per_page = 10
+
+            if collection := self.model.database[self.model.collection_name]:
+                if (count := collection.count_documents(self.statements)) > 0:
+                    if cursor := collection.find(self.statements).skip((current - 1) * results_per_page).sort(self.sorts).limit(results_per_page):
+                        results = [self.model.__class__(**document) for document in cursor]
+
+            return Flexmodel.Select.Pagination(count, results, current=current, results_per_page=results_per_page)
+
+        class Pagination:
+            def __init__(self, count: int, results: list["Flexmodel"], *, current: int, results_per_page: int):
+                self.count: int = count
+                self.results: list["Flexmodel"] = results
+                self.current: int = current
+                self.results_per_page: int = results_per_page
+
+            def __len__(self) -> int:
+                return self.count
+
+            def __iter__(self):
+                for item in self.results:
+                    yield item
+
+            def map(self, callback: Callable[["Flexmodel"], "Flexmodel"]) -> list["Flexmodel"]:
+                return [callback(item) for item in self.results]
+
+            def to_dict(self) -> dict[str, Any]:
+                return {
+                    "count": self.count,
+                    "results": [item.to_dict() for item in self.results],
+                    "pagination": {
+                        "current": self.current,
+                        "results_per_page": self.results_per_page,
+                    },
+                }
+
+        class Statement:
+            def __init__(self, name: str, model: Any):
+                self.name: str = name
+                self.model: Any = model
+
+            def __getattr__(self, name: str) -> "Flexmodel.Select.Statement":
+                if not isinstance(self.model, Flex) or name not in self.model.schema.fields:
+                    raise FlexmodelException(f"Select statement: field '{self.name}' is not a Flex object, cannot access sub-field '{name}'.")
+
+                return Flexmodel.Select.Statement(f"{self.name}.{name}", self.model.__dict__.get(name, self.model.schema[name].default))
+
+            def __getitem__(self, name: str) -> "Flexmodel.Select.Statement":
+                if not isinstance(self.model, Flex) or name not in self.model.schema.fields:
+                    raise FlexmodelException(f"Select statement: field '{self.name}' is not a Flex object, cannot access sub-field '{name}'.")
+
+                return Flexmodel.Select.Statement(f"{self.name}.{name}", self.model.__dict__.get(name, self.model.schema[name].default))
+
+            def __eq__(self, value: Any) -> dict[str, Any]:  # type: ignore
+                return {self.name: value}
+
+            def __ne__(self, value: Any) -> dict[str, Any]:  # type: ignore
+                return {self.name: {"$ne": value}}
+
+            def __lt__(self, value: Any) -> dict[str, Any]:  # type: ignore
+                return {self.name: {"$lt": value}}
+
+            def __gt__(self, value: Any) -> dict[str, Any]:  # type: ignore
+                return {self.name: {"$gt": value}}
+
+            def __le__(self, value: Any) -> dict[str, Any]:  # type: ignore
+                return {self.name: {"$lte": value}}
+
+            def __ge__(self, value: Any) -> dict[str, Any]:  # type: ignore
+                return {self.name: {"$gte": value}}
+
+            def __contains__(self, item: Any) -> dict[str, Any]:  # type: ignore
+                return {self.name: {"$in": item}}
+
+            def asc(self) -> dict[str, Any]:
+                return {self.name: 1}
+
+            def desc(self) -> dict[str, Any]:
+                return {self.name: -1}
+
+            def is_true(self) -> dict[str, Any]:
+                return {self.name: {"$eq": True}}
+
+            def is_false(self) -> dict[str, Any]:
+                return {self.name: {"$eq": False}}
+
+            def is_null(self) -> dict[str, Any]:
+                return {self.name: {"$eq": None}}
+
+            def is_not_null(self) -> dict[str, Any]:
+                return {self.name: {"$ne": None}}
+
+            def is_empty(self) -> dict[str, Any]:
+                return {self.name: {"$in": [None, ""]}}
+
+            def is_not_empty(self) -> dict[str, Any]:
+                return {self.name: {"$nin": [None, ""]}}
+
+            def is_between(self, *, start: int | str, end: int | str) -> dict[str, Any]:
+                return {self.name: {"$gte": start, "$lte": end}}
+
+            def is_not_between(self, *, start: int | str, end: int | str) -> dict[str, Any]:
+                return {self.name: {"$lt": start, "$gt": end}}
+
+            def is_in(self, *, items: list[Any]) -> dict[str, Any]:
+                return {self.name: {"$in": items}}
+
+            def is_not_in(self, *, items: list[Any]) -> dict[str, Any]:
+                return {self.name: {"$nin": items}}
+
+            def match(self, pattern: str, *, options: str = "i") -> dict[str, Any]:
+                return {self.name: {"$regex": pattern, "$options": options}}
+
+            def not_match(self, pattern: str, *, options: str = "i") -> dict[str, Any]:
+                return {self.name: {"$not": {"$regex": pattern, "$options": options}}}
+
+            def subset(self, items: list[Any]) -> dict[str, Any]:
+                return {self.name: {"$all": items}}
+
+            def not_subset(self, items: list[Any]) -> dict[str, Any]:
+                return {self.name: {"$not": {"$all": items}}}
 
 
 def field(
@@ -620,11 +578,3 @@ def field_constraint(
     *, item_type: Optional[Type] = None, min_length: Optional[int] = None, max_length: Optional[int] = None, pattern: Optional[str] = None
 ) -> Schema.Field.Constraint:
     return Schema.Field.Constraint(item_type=item_type, min_length=min_length, max_length=max_length, pattern=pattern)
-
-
-def default(flex: Flex | Flexmodel, name: str) -> Any:
-    return flex.schema[name].default
-
-
-# Alias for backward compatibility
-FlexmodelSQLite = Flexmodel

@@ -74,7 +74,7 @@ Use the `field()` function to define schema fields with validation rules:
 
 ```python
 field(
-    type,                    # Field type (required)
+    type,                   # Field type (required)
     default=None,           # Default value
     nullable=True,          # Allow None values (True/False or int for min occurrences)
     constraint=...,         # Field constraints
