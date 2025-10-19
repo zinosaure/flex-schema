@@ -16,143 +16,154 @@ class Product(Flexmodel):
 
 
 if __name__ == "__main__":
-    # Connect to MongoDB (replace with your MongoDB connection string)
-    client = MongoClient("mongodb://localhost:27017/testdb")
-    Product.attach(client, "products")
-
-    # Create sample products
-    products = [
-        Product(name="Laptop", price=999.99, category="electronics", in_stock=True, quantity=10),
-        Product(name="Mouse", price=29.99, category="electronics", in_stock=True, quantity=50),
-        Product(name="Keyboard", price=79.99, category="electronics", in_stock=False, quantity=0),
-        Product(name="Monitor", price=299.99, category="electronics", in_stock=True, quantity=15),
-        Product(name="Desk", price=199.99, category="furniture", in_stock=True, quantity=5),
-        Product(name="Chair", price=149.99, category="furniture", in_stock=False, quantity=0),
-        Product(name="Pen", price=1.99, category="stationery", in_stock=True, quantity=100),
-    ]
-
-    # Save all products
-    try:
-        for p in products:
-            p.commit()
-        print("✅ Products created successfully!\n")
-    except Exception as e:
-        print(f"⚠️ Warning: Could not save products to database: {e}")
-        print("Make sure MongoDB is running at localhost:27017\n")
-
-    print("=== ORM-Style Query Examples ===\n")
-
-    # Using the Select API
-    print("1. Products with price > 100 (using Select API):")
-    try:
-        select = Product.select()
-        select.where(select.price > 100)
-        for product in select.fetch_all():
-            print(f"   - {product.name}: ${product.price}")
-    except Exception as e:
-        print(f"   Example query: Product.select().where(select.price > 100)")
-
-    print("\n2. Products with quantity >= 10 (using Select API):")
-    try:
-        select = Product.select()
-        select.where(select.quantity >= 10)
-        for product in select.fetch_all():
-            print(f"   - {product.name}: {product.quantity} units")
-    except Exception as e:
-        print(f"   Example query: Product.select().where(select.quantity >= 10)")
-
-    print("\n3. Cheap products - price < 50 (using Select API):")
-    try:
-        select = Product.select()
-        select.where(select.price < 50)
-        for product in select.fetch_all():
-            print(f"   - {product.name}: ${product.price}")
-    except Exception as e:
-        print(f"   Example query: Product.select().where(select.price < 50)")
-
-    print("\n4. Electronics or furniture (using Select API):")
-    try:
-        select = Product.select()
-        select.where(
-            select.at_least(
-                select.category == "electronics",
-                select.category == "furniture"
-            )
+    print("=== ORM-Style Query API Examples ===\n")
+    print("This example demonstrates the query builder without connecting to MongoDB.\n")
+    
+    # Note: To actually run queries against a database, uncomment these lines:
+    # client = MongoClient("mongodb://localhost:27017/testdb")
+    # Product.attach(client, "products")
+    
+    # Create a mock select object for demonstration
+    # (In real usage, this would be: select = Product.select())
+    class MockSelect:
+        def __init__(self):
+            self.conditions = []
+            
+        def __getattr__(self, name):
+            return MockStatement(name)
+            
+        def where(self, *args):
+            self.conditions.extend(args)
+            return self
+            
+        def sort(self, *args):
+            return self
+            
+        def match(self, *args):
+            return {"$and": list(args)}
+            
+        def at_least(self, *args):
+            return {"$or": list(args)}
+    
+    class MockStatement:
+        def __init__(self, name):
+            self.name = name
+            
+        def __gt__(self, value):
+            return {self.name: {"$gt": value}}
+            
+        def __ge__(self, value):
+            return {self.name: {"$gte": value}}
+            
+        def __lt__(self, value):
+            return {self.name: {"$lt": value}}
+            
+        def __le__(self, value):
+            return {self.name: {"$lte": value}}
+            
+        def __eq__(self, value):
+            return {self.name: value}
+            
+        def __ne__(self, value):
+            return {self.name: {"$ne": value}}
+            
+        def is_true(self):
+            return {self.name: {"$eq": True}}
+            
+        def is_false(self):
+            return {self.name: {"$eq": False}}
+            
+        def is_between(self, start, end):
+            return {self.name: {"$gte": start, "$lte": end}}
+            
+        def is_in(self, items):
+            return {self.name: {"$in": items}}
+            
+        def asc(self):
+            return {self.name: 1}
+            
+        def desc(self):
+            return {self.name: -1}
+    
+    select = MockSelect()
+    
+    print("1. Simple comparison:")
+    query = select.price > 100
+    print(f"   select.price > 100")
+    print(f"   → {query}\n")
+    
+    print("2. Range query:")
+    query = select.price.is_between(start=50, end=500)
+    print(f"   select.price.is_between(start=50, end=500)")
+    print(f"   → {query}\n")
+    
+    print("3. IN query:")
+    query = select.category.is_in(items=["electronics", "furniture"])
+    print(f"   select.category.is_in(items=['electronics', 'furniture'])")
+    print(f"   → {query}\n")
+    
+    print("4. Boolean query:")
+    query = select.in_stock.is_true()
+    print(f"   select.in_stock.is_true()")
+    print(f"   → {query}\n")
+    
+    print("5. Logical AND (match):")
+    query = select.match(
+        select.price > 50,
+        select.price < 500,
+        select.in_stock.is_true()
+    )
+    print(f"   select.match(")
+    print(f"       select.price > 50,")
+    print(f"       select.price < 500,")
+    print(f"       select.in_stock.is_true()")
+    print(f"   )")
+    print(f"   → {query}\n")
+    
+    print("6. Logical OR (at_least):")
+    query = select.at_least(
+        select.price < 50,
+        select.price > 1000
+    )
+    print(f"   select.at_least(")
+    print(f"       select.price < 50,")
+    print(f"       select.price > 1000")
+    print(f"   )")
+    print(f"   → {query}\n")
+    
+    print("7. Sorting:")
+    asc_sort = select.price.asc()
+    desc_sort = select.name.desc()
+    print(f"   select.price.asc() → {asc_sort}")
+    print(f"   select.name.desc() → {desc_sort}\n")
+    
+    print("8. Complex nested query:")
+    query = select.at_least(
+        select.match(
+            select.category == "electronics",
+            select.price >= 100
+        ),
+        select.match(
+            select.category == "furniture",
+            select.in_stock.is_true()
         )
-        for product in select.fetch_all():
-            print(f"   - {product.name} ({product.category})")
-    except Exception as e:
-        print(f"   Example query: Product.select().where(select.at_least(...))")
-
-    print("\n5. In stock products (using Select API):")
-    try:
-        select = Product.select()
-        select.where(select.in_stock.is_true())
-        for product in select.fetch_all():
-            print(f"   - {product.name}")
-    except Exception as e:
-        print(f"   Example query: Product.select().where(select.in_stock.is_true())")
-
-    print("\n6. Cheap OR expensive (< $50 OR > $500) using Select API:")
-    try:
-        select = Product.select()
-        select.where(
-            select.at_least(
-                select.price < 50,
-                select.price > 500
-            )
-        )
-        for product in select.fetch_all():
-            print(f"   - {product.name}: ${product.price}")
-    except Exception as e:
-        print(f"   Example query: Product.select().where(select.at_least(price < 50, price > 500))")
-
-    print("\n7. In stock AND price between $50-$300 (using Select API):")
-    try:
-        select = Product.select()
-        select.where(
-            select.match(
-                select.in_stock.is_true(),
-                select.price.is_between(start=50, end=300)
-            )
-        )
-        for product in select.fetch_all():
-            print(f"   - {product.name}: ${product.price}")
-    except Exception as e:
-        print(f"   Example query: Product.select().where(select.match(in_stock, price.is_between(...)))")
-
-    print("\n8. Complex query - Electronics >= $100 OR furniture in stock (using Select API):")
-    try:
-        select = Product.select()
-        select.where(
-            select.at_least(
-                select.match(
-                    select.category == "electronics",
-                    select.price >= 100
-                ),
-                select.match(
-                    select.category == "furniture",
-                    select.in_stock.is_true()
-                )
-            )
-        )
-        for product in select.fetch_all():
-            print(f"   - {product.name} ({product.category}): ${product.price}, in_stock={product.in_stock}")
-    except Exception as e:
-        print(f"   Example query: Complex nested match and at_least conditions")
-
-    print("\n9. Sorted by price (ascending):")
-    try:
-        select = Product.select()
-        select.sort(select.price.asc())
-        for product in select.fetch_all(results_per_page=5):
-            print(f"   - {product.name}: ${product.price}")
-    except Exception as e:
-        print(f"   Example query: Product.select().sort(select.price.asc())")
-
-    print(f"\n10. Total products in database: {Product.count()}")
-
-    print("\n✅ ORM-style query examples completed!")
-    print("\nNote: If MongoDB is not running, queries will fail.")
-    print("To run with actual database, start MongoDB at localhost:27017")
-
+    )
+    print(f"   select.at_least(")
+    print(f"       select.match(")
+    print(f"           select.category == 'electronics',")
+    print(f"           select.price >= 100")
+    print(f"       ),")
+    print(f"       select.match(")
+    print(f"           select.category == 'furniture',")
+    print(f"           select.in_stock.is_true()")
+    print(f"       )")
+    print(f"   )")
+    print(f"   → {query}\n")
+    
+    print("✅ ORM-style query examples completed!")
+    print("\nTo use with actual MongoDB:")
+    print("  client = MongoClient('mongodb://localhost:27017/testdb')")
+    print("  Product.attach(client, 'products')")
+    print("  select = Product.select()")
+    print("  select.where(select.price > 100)")
+    print("  products = select.fetch_all()")
