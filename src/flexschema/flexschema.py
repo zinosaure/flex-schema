@@ -5,7 +5,7 @@ import logging
 import pymongo
 
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional, Type
+from typing import Any, Callable, Optional, Type, Union
 
 
 logging.basicConfig(level=logging.INFO)
@@ -227,7 +227,7 @@ class Flex:
 
 class Flexmodel(Flex):
     schema: Schema = Schema.ident()
-    database: pymongo.MongoClient
+    database: pymongo.database.Database
     collection_name: str = "collections"
 
     @property
@@ -263,27 +263,33 @@ class Flexmodel(Flex):
 
         self.update(_updated_at=datetime.now(timezone.utc).isoformat())
 
-        if collection := self.database[self.collection_name]:
-            return collection.replace_one({"_id": self.id}, self.to_dict(commit=commit_all), upsert=True).acknowledged
-
-        return False
+        collection = self.database[self.collection_name]
+        return collection.replace_one({"_id": self.id}, self.to_dict(commit=commit_all), upsert=True).acknowledged
 
     def delete(self) -> bool:
-        if collection := self.database[self.collection_name]:
-            return collection.delete_one({"_id": self.id}).deleted_count > 0
-
-        return False
+        collection = self.database[self.collection_name]
+        return collection.delete_one({"_id": self.id}).deleted_count > 0
 
     @classmethod
-    def attach(cls, database: pymongo.MongoClient, collection_name: Optional[str] = None):
-        if not isinstance(database, pymongo.MongoClient):
-            raise FlexmodelException("Cannot attach to the database: invalid database type. Only 'pymongo.MongoClient' is supported.")
+    def attach(cls, database: Union[pymongo.MongoClient, pymongo.database.Database], collection_name: Optional[str] = None):
+        # Accept both MongoClient and Database for flexibility
+        if isinstance(database, pymongo.MongoClient):
+            # If MongoClient is provided, get the default database from the connection string
+            database = database.get_default_database()
+        elif not isinstance(database, pymongo.database.Database):
+            raise FlexmodelException("Cannot attach to the database: invalid database type. Only 'pymongo.MongoClient' or 'pymongo.database.Database' is supported.")
 
         cls.database = database
         cls.collection_name = collection_name or cls.__name__.lower() + "s"
 
-        if (collection := cls.database[cls.collection_name]) and not collection.index_information().get("_id_"):
-            collection.create_index("_id", unique=True)
+        # Try to create index if database is available, but don't fail if it's not
+        try:
+            collection = cls.database[cls.collection_name]
+            if not collection.index_information().get("_id_"):
+                collection.create_index("_id", unique=True)
+        except Exception:
+            # Database might not be available during initialization
+            pass
 
     @classmethod
     def detach(cls):
@@ -292,15 +298,15 @@ class Flexmodel(Flex):
 
     @classmethod
     def load(cls, id: str) -> Optional["Flexmodel"]:
-        if (collection := cls.database[cls.collection_name]) and (document := collection.find_one({"_id": id})):
+        collection = cls.database[cls.collection_name]
+        document = collection.find_one({"_id": id})
+        if document:
             return cls(**document)
 
     @classmethod
     def count(cls) -> int:
-        if collection := cls.database[cls.collection_name]:
-            return collection.count_documents({})
-
-        return 0
+        collection = cls.database[cls.collection_name]
+        return collection.count_documents({})
 
     @classmethod
     def select(cls) -> "Flexmodel.Select":
@@ -422,15 +428,14 @@ class Flexmodel(Flex):
             self.statements = {}
 
         def count(self) -> int:
-            if collection := self.model.database[self.model.collection_name]:
-                return collection.count_documents(self.statements)
-
-            return 0
+            collection = self.model.database[self.model.collection_name]
+            return collection.count_documents(self.statements)
 
         def fetch(self) -> Optional["Flexmodel"]:
-            if collection := self.model.database[self.model.collection_name]:
-                if document := collection.find_one(self.statements):
-                    return self.model.__class__(**document)
+            collection = self.model.database[self.model.collection_name]
+            document = collection.find_one(self.statements)
+            if document:
+                return self.model.__class__(**document)
 
         def fetch_all(self, current: int = 1, results_per_page: int = 10) -> "Flexmodel.Select.Pagination":
             count: int = 0
@@ -442,10 +447,11 @@ class Flexmodel(Flex):
             if results_per_page < 1:
                 results_per_page = 10
 
-            if collection := self.model.database[self.model.collection_name]:
-                if (count := collection.count_documents(self.statements)) > 0:
-                    if cursor := collection.find(self.statements).skip((current - 1) * results_per_page).sort(self.sorts).limit(results_per_page):
-                        results = [self.model.__class__(**document) for document in cursor]
+            collection = self.model.database[self.model.collection_name]
+            count = collection.count_documents(self.statements)
+            if count > 0:
+                cursor = collection.find(self.statements).skip((current - 1) * results_per_page).sort(self.sorts).limit(results_per_page)
+                results = [self.model.__class__(**document) for document in cursor]
 
             return Flexmodel.Select.Pagination(count, results, current=current, results_per_page=results_per_page)
 
