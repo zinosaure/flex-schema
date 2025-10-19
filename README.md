@@ -1,6 +1,6 @@
 # Flex-Schema
 
-A flexible and powerful schema validation library for Python with MongoDB and SQLite3 integration. Flex-Schema provides a declarative way to define data models with built-in validation, type checking, and seamless database operations.
+A flexible and powerful schema validation library for Python with MongoDB integration and ORM-style query API. Flex-Schema provides a declarative way to define data models with built-in validation, type checking, and seamless database operations.
 
 ## Features
 
@@ -8,7 +8,7 @@ A flexible and powerful schema validation library for Python with MongoDB and SQ
 - **Type Safety**: Built-in type checking for common Python types (str, int, float, bool, list, tuple)
 - **Field Validation**: Comprehensive validation with constraints (min/max length, patterns, nullable fields)
 - **MongoDB Integration**: Seamless integration with MongoDB for CRUD operations
-- **SQLite3 Integration**: Full SQLite3 support with the same API as MongoDB
+- **ORM-Style Query API**: Intuitive, chainable query builder with type-safe field access
 - **Nested Models**: Support for complex nested data structures
 - **Auto-generated IDs**: Automatic UUID generation and timestamp tracking
 - **Callbacks**: Transform field values with custom callback functions
@@ -123,7 +123,7 @@ print(meta.to_dict())
 
 ### Flexmodel
 
-The `Flexmodel` class extends `Flex` with MongoDB persistence capabilities:
+The `Flexmodel` class extends `Flex` with MongoDB persistence capabilities and an ORM-style query API:
 
 ```python
 from flexschema import Schema, Flexmodel, field
@@ -151,66 +151,147 @@ product.commit()
 - `updated_at`: Get last update timestamp
 
 **Class Methods:**
-- `attach(database, collection_name=None)`: Connect to MongoDB
+- `attach(database, collection_name=None)`: Connect to MongoDB (accepts MongoClient or Database)
 - `detach()`: Disconnect from MongoDB
-- `collection()`: Get the MongoDB collection
 - `load(_id)`: Load a document by ID
-- `fetch(queries)`: Find one document matching queries
-- `fetch_all(queries={}, page=1, item_per_page=10)`: Get paginated results
 - `count()`: Count documents in collection
-- `truncate()`: Drop the collection
+- `select()`: Create an ORM-style query builder
 
-### FlexmodelSQLite
+## ORM-Style Query API
 
-The `FlexmodelSQLite` class extends `Flex` with SQLite3 persistence capabilities, providing the same API as `Flexmodel` but using SQLite instead of MongoDB:
+Flexmodel provides a powerful ORM-style query API through the `select()` method, allowing you to build type-safe, chainable queries:
 
 ```python
-from flexschema import Schema, FlexmodelSQLite, field
-import sqlite3
+from flexschema import Schema, Flexmodel, field
+from pymongo import MongoClient
 
-class Product(FlexmodelSQLite):
+class Product(Flexmodel):
     schema: Schema = Schema.ident(
         name=field(str, nullable=False),
         price=field(float, default=0.0),
+        category=field(str, nullable=False),
         in_stock=field(bool, default=True),
     )
 
-# Attach to SQLite database
-conn = sqlite3.connect("mydb.sqlite")
-Product.attach(conn, "products")
+# Connect to database
+Product.attach(MongoClient("mongodb://localhost:27017/shop"), "products")
 
-# Create and save
-product = Product(name="Laptop", price=999.99)
-product.commit()
+# Create a query builder
+select = Product.select()
 
-# Load by ID
-loaded = Product.load(product.id)
+# Simple equality
+select.where(select.name == "Laptop")
+product = select.fetch()  # Get one result
 
-# Query
-found = Product.fetch({"name": "Laptop"})
+# Comparison operators
+select.where(select.price > 100)
+select.where(select.price >= 50)
+select.where(select.price < 1000)
+select.where(select.price <= 500)
+select.where(select.name != "Mouse")
+
+# Boolean queries
+select.where(select.in_stock.is_true())
+select.where(select.in_stock.is_false())
+
+# Null and empty checks
+select.where(select.name.is_null())
+select.where(select.name.is_not_null())
+select.where(select.name.is_empty())
+select.where(select.name.is_not_empty())
+
+# Range queries
+select.where(select.price.is_between(start=50, end=500))
+select.where(select.price.is_not_between(start=50, end=500))
+
+# IN queries
+select.where(select.category.is_in(items=["electronics", "furniture"]))
+select.where(select.category.is_not_in(items=["stationery"]))
+
+# Pattern matching (regex)
+select.where(select.name.match("^Lap", options="i"))
+select.where(select.name.not_match("^Mouse", options="i"))
+
+# Logical AND (match)
+select.where(
+    select.match(
+        select.price > 50,
+        select.price < 500,
+        select.in_stock.is_true()
+    )
+)
+
+# Logical OR (at_least)
+select.where(
+    select.at_least(
+        select.price < 50,
+        select.price > 1000
+    )
+)
+
+# Complex nested queries
+select.where(
+    select.at_least(
+        select.match(
+            select.category == "electronics",
+            select.price >= 100
+        ),
+        select.match(
+            select.category == "furniture",
+            select.in_stock.is_true()
+        )
+    )
+)
+
+# Sorting
+select.sort(select.price.asc())   # Ascending
+select.sort(select.price.desc())  # Descending
+
+# Fetch results
+products = select.fetch_all(current=1, results_per_page=10)
+for product in products:
+    print(product.name)
+
+# Count results
+total = select.count()
+
+# SQL conversion (for debugging/logging)
+sql_query = select.to_sql
+print(sql_query)  # SELECT * FROM products WHERE ...
+
+# Clear query and start fresh
+select.discard()
 ```
 
-**Database Schema:**
+**Select API Methods:**
 
-FlexmodelSQLite stores data in tables with the following structure:
-- `_id` (TEXT PRIMARY KEY): UUID identifier
-- `_updated_at` (TEXT): ISO format timestamp
-- `document` (TEXT): JSON representation of the full document
+**Query Building:**
+- `where(*conditions)`: Add conditions to the query
+- `match(*conditions)`: Logical AND of conditions
+- `at_least(*conditions)`: Logical OR of conditions
+- `not_match(*conditions)`: Negation of AND conditions
+- `not_at_least(*conditions)`: Negation of OR conditions
+- `sort(*conditions)`: Add sorting conditions
+- `discard()`: Clear all conditions and sorting
 
-**Instance Methods:**
-- `commit(commit_all=True)`: Save to database
-- `delete()`: Remove from database
-- `id`: Get the document ID
-- `updated_at`: Get last update timestamp
+**Fetching Results:**
+- `fetch()`: Get one document matching the query
+- `fetch_all(current=1, results_per_page=10)`: Get paginated results
+- `count()`: Count documents matching the query
 
-**Class Methods:**
-- `attach(database, table_name=None)`: Connect to SQLite database (creates table if needed)
-- `detach()`: Disconnect from SQLite database
-- `load(_id)`: Load a document by ID
-- `fetch(queries)`: Find one document matching queries
-- `fetch_all(queries={}, page=1, item_per_page=10)`: Get paginated results
-- `count()`: Count documents in table
-- `truncate()`: Delete all records from table
+**Statement Methods (on field access, e.g., `select.price`):**
+- Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
+- Boolean: `is_true()`, `is_false()`
+- Null: `is_null()`, `is_not_null()`
+- Empty: `is_empty()`, `is_not_empty()`
+- Range: `is_between(start, end)`, `is_not_between(start, end)`
+- IN: `is_in(items)`, `is_not_in(items)`
+- Pattern: `match(pattern, options)`, `not_match(pattern, options)`
+- Sorting: `asc()`, `desc()`
+
+**Utility:**
+- `query_string`: Get JSON representation of the query
+- `to_sql`: Get SQL-like representation of the query (for debugging)
 
 ## Complete Example
 
@@ -347,7 +428,7 @@ if not article.is_schematic():
     # }
 ```
 
-## Querying
+## Querying with ORM-Style API
 
 ### Fetch Single Document
 
@@ -355,22 +436,25 @@ if not article.is_schematic():
 # Find by ID
 user = User.load("user-id-123")
 
-# Find by query
-user = User.fetch({"email": "john@example.com"})
+# Find by query using Select API
+select = User.select()
+select.where(select.email == "john@example.com")
+user = select.fetch()
 ```
 
 ### Fetch Multiple Documents with Pagination
 
 ```python
-# Get first page (10 items by default)
-pagination = User.fetch_all(
-    queries={"is_active": True},
-    page=1,
-    item_per_page=20
-)
+# Create a query builder
+select = User.select()
 
-print(f"Total items: {pagination.total_items}")
-print(f"Current page: {pagination.page}")
+# Add conditions
+select.where(select.is_active.is_true())
+
+# Fetch paginated results
+pagination = select.fetch_all(current=1, results_per_page=20)
+
+print(f"Total items: {len(pagination)}")
 
 for user in pagination:
     print(user.name)
@@ -379,121 +463,145 @@ for user in pagination:
 result = pagination.to_dict()
 ```
 
-### MongoDB Query Operators
+### Query Examples
 
-Both MongoDB and SQLite backends support MongoDB-style query operators for advanced filtering:
+The ORM-style API provides intuitive methods for building queries:
 
 #### Comparison Operators
 
 ```python
-# Greater than ($gt)
-products = Product.fetch_all({"price": {"$gt": 100}})
+select = Product.select()
 
-# Greater than or equal ($gte)
-products = Product.fetch_all({"quantity": {"$gte": 10}})
+# Greater than
+select.where(select.price > 100)
+products = select.fetch_all()
 
-# Less than ($lt)
-products = Product.fetch_all({"price": {"$lt": 50}})
+# Greater than or equal
+select.where(select.quantity >= 10)
 
-# Less than or equal ($lte)
-products = Product.fetch_all({"age": {"$lte": 30}})
+# Less than
+select.where(select.price < 50)
 
-# Not equal ($ne)
-users = User.fetch_all({"status": {"$ne": "inactive"}})
+# Less than or equal
+select.where(select.age <= 30)
 
-# Equal ($eq) - explicit equality
-user = User.fetch({"email": {"$eq": "john@example.com"}})
+# Not equal
+select.where(select.status != "inactive")
+
+# Equal (default with ==)
+select.where(select.email == "john@example.com")
+user = select.fetch()
 ```
 
-#### Array Operators
+#### Range and Set Operators
 
 ```python
-# In array ($in)
-products = Product.fetch_all({
-    "category": {"$in": ["electronics", "computers"]}
-})
+select = Product.select()
 
-# Not in array ($nin)
-users = User.fetch_all({
-    "role": {"$nin": ["admin", "moderator"]}
-})
+# Between (range)
+select.where(select.price.is_between(start=50, end=500))
+
+# In array
+select.where(select.category.is_in(items=["electronics", "computers"]))
+
+# Not in array
+select.where(select.role.is_not_in(items=["admin", "moderator"]))
 ```
 
 #### Logical Operators
 
 ```python
-# OR operator ($or)
-products = Product.fetch_all({
-    "$or": [
-        {"price": {"$lt": 50}},
-        {"price": {"$gt": 1000}}
-    ]
-})
+select = Product.select()
 
-# AND operator ($and) - explicit, usually implicit
-products = Product.fetch_all({
-    "$and": [
-        {"category": "electronics"},
-        {"in_stock": True}
-    ]
-})
+# OR operator (at_least)
+select.where(
+    select.at_least(
+        select.price < 50,
+        select.price > 1000
+    )
+)
 
-# Implicit AND (default behavior)
-products = Product.fetch_all({
-    "category": "electronics",
-    "in_stock": True
-})
+# AND operator (match)
+select.where(
+    select.match(
+        select.category == "electronics",
+        select.in_stock.is_true()
+    )
+)
+
+# Implicit AND (multiple where calls)
+select.where(select.category == "electronics")
+select.where(select.in_stock.is_true())
 ```
 
-#### Existence Operator
+#### Null and Empty Checks
 
 ```python
-# Field exists ($exists)
-users = User.fetch_all({"phone": {"$exists": True}})
+select = User.select()
 
-# Field does not exist
-users = User.fetch_all({"phone": {"$exists": False}})
+# Check if field is null
+select.where(select.phone.is_null())
+
+# Check if field is not null
+select.where(select.phone.is_not_null())
+
+# Check if field is empty (null or "")
+select.where(select.name.is_empty())
+
+# Check if field is not empty
+select.where(select.name.is_not_empty())
 ```
 
 #### Combined Queries
 
 ```python
-# Complex query combining multiple operators
-results = Product.fetch_all({
-    "$or": [
-        {
-            "$and": [
-                {"category": "electronics"},
-                {"price": {"$gte": 100}}
-            ]
-        },
-        {
-            "$and": [
-                {"category": "furniture"},
-                {"in_stock": True}
-            ]
-        }
-    ]
-})
+select = Product.select()
 
-# Multiple conditions with operators
-users = User.fetch_all({
-    "age": {"$gte": 18, "$lt": 65},
-    "status": {"$in": ["active", "pending"]},
-    "role": {"$ne": "guest"}
-})
+# Complex query combining multiple operators
+select.where(
+    select.at_least(
+        select.match(
+            select.category == "electronics",
+            select.price >= 100
+        ),
+        select.match(
+            select.category == "furniture",
+            select.in_stock.is_true()
+        )
+    )
+)
+
+# Multiple conditions
+select.where(select.age.is_between(start=18, end=65))
+select.where(select.status.is_in(items=["active", "pending"]))
+select.where(select.role != "guest")
 ```
 
-**Note:** All query operators work identically for both MongoDB and SQLite backends, ensuring seamless migration between database systems.
-
-### Count and Truncate
+#### Sorting
 
 ```python
-# Count documents
+select = Product.select()
+
+# Sort ascending
+select.sort(select.price.asc())
+
+# Sort descending
+select.sort(select.name.desc())
+
+# Fetch sorted results
+products = select.fetch_all()
+```
+
+### Count Documents
+
+```python
+# Count all documents
 total_users = User.count()
 
-# Delete all documents
-User.truncate()
+# Count documents matching a query
+select = User.select()
+select.where(select.is_active.is_true())
+active_users = select.count()
 ```
 
 ## Advanced Features
