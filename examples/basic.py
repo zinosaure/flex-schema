@@ -64,21 +64,38 @@ class User(Flexmodel):
 
 
 if __name__ == "__main__":
-    User.attach(client := MongoClient("mongodb://localhost:27017/testdb"), "users")  # connect to MongoDB
-    Login.attach(client, "logins")  # connect to MongoDB
+    try:
+        # Try to connect to MongoDB
+        User.attach(client := MongoClient("mongodb://localhost:27017/testdb", serverSelectionTimeoutMS=1000), "users")
+        Login.attach(client, "logins")
 
-    user = User(
-        name="john doe",
-        email="john.doe@example.com",
-        date_of_birth="1990-01-01",
-        login=Login(username="johndoe", password="securepassword"),
-        tags=["user", "admin"],
-        is_active=True,
-        score=100.0,
-        metadata=Metadata(created_by="admin", last_login=int(time.time())),
-    )
+        user = User(
+            name="john doe",
+            email="john.doe@example.com",
+            date_of_birth="1990-01-01",
+            login=Login(username="johndoe", password="securepassword"),
+            tags=["user", "admin"],
+            is_active=True,
+            score=100.0,
+            metadata=Metadata(created_by="admin", last_login=int(time.time())),
+        )
 
-    if user.commit():
+        if user.commit():
+            print(user.to_json(indent=4))
+        else:
+            print("Failed to save user:\n", user.evaluate())
+    except Exception as e:
+        print(f"⚠️  MongoDB not available: {e}")
+        print("\nShowing user data without saving to database:")
+        user = User(
+            name="john doe",
+            email="john.doe@example.com",
+            date_of_birth="1990-01-01",
+            login=Login(username="johndoe", password="securepassword"),
+            tags=["user", "admin"],
+            is_active=True,
+            score=100.0,
+            metadata=Metadata(created_by="admin", last_login=int(time.time())),
+        )
         print(user.to_json(indent=4))
-    else:
-        print("Failed to save user:\n", user.evaluate())
+        print("\nTo save to database, start MongoDB at localhost:27017")
