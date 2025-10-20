@@ -263,12 +263,10 @@ class Flexmodel(Flex):
 
         self.update(_updated_at=datetime.now(timezone.utc).isoformat())
 
-        collection = self.database[self.collection_name]
-        return collection.replace_one({"_id": self.id}, self.to_dict(commit=commit_all), upsert=True).acknowledged
+        return self.collection().replace_one({"_id": self.id}, self.to_dict(commit=commit_all), upsert=True).acknowledged
 
     def delete(self) -> bool:
-        collection = self.database[self.collection_name]
-        return collection.delete_one({"_id": self.id}).deleted_count > 0
+        return self.collection().delete_one({"_id": self.id}).deleted_count > 0
 
     @classmethod
     def attach(cls, database: Union[pymongo.MongoClient, pymongo.database.Database], collection_name: Optional[str] = None):
@@ -284,9 +282,8 @@ class Flexmodel(Flex):
 
         # Try to create index if database is available, but don't fail if it's not
         try:
-            collection = cls.database[cls.collection_name]
-            if not collection.index_information().get("_id_"):
-                collection.create_index("_id", unique=True)
+            if not cls.collection().index_information().get("_id_"):
+                cls.collection().create_index("_id", unique=True)
         except Exception:
             # Database might not be available during initialization
             pass
@@ -297,16 +294,17 @@ class Flexmodel(Flex):
         cls.collection_name = "collections"
 
     @classmethod
+    def collection(cls) -> pymongo.collection.Collection:
+        return cls.database[cls.collection_name]
+
+    @classmethod
     def load(cls, id: str) -> Optional["Flexmodel"]:
-        collection = cls.database[cls.collection_name]
-        document = collection.find_one({"_id": id})
-        if document:
+        if document := cls.collection().find_one({"_id": id}):
             return cls(**document)
 
     @classmethod
     def count(cls) -> int:
-        collection = cls.database[cls.collection_name]
-        return collection.count_documents({})
+        return cls.collection().count_documents({})
 
     @classmethod
     def select(cls) -> "Flexmodel.Select":
@@ -377,6 +375,12 @@ class Flexmodel(Flex):
                                     clauses.append(f"{key} NOT IN ({', '.join([json.dumps(v) for v in val])})")
                                 elif op == "$regex":
                                     clauses.append(f"{key} REGEXP '{val}'")
+                                elif op == "$exists":
+                                    clauses.append(f"{key} IS {'NOT ' if not val else ''}NULL")
+                                elif op == "$all":
+                                    clauses.append(f"{key} CONTAINS ALL ({', '.join([json.dumps(v) for v in val])})")
+                                elif op == "$where":
+                                    clauses.append(f"{val}  -- JavaScript function, cannot be directly translated to SQL")
                                 elif op == "$not":
                                     clauses.append(f"NOT ({parse_condition({key: val})})")
                         else:
@@ -428,13 +432,10 @@ class Flexmodel(Flex):
             self.statements = {}
 
         def count(self) -> int:
-            collection = self.model.database[self.model.collection_name]
-            return collection.count_documents(self.statements)
+            return self.model.collection().count_documents(self.statements)
 
         def fetch(self) -> Optional["Flexmodel"]:
-            collection = self.model.database[self.model.collection_name]
-            document = collection.find_one(self.statements)
-            if document:
+            if document := self.model.collection().find_one(self.statements):
                 return self.model.__class__(**document)
 
         def fetch_all(self, current: int = 1, results_per_page: int = 10) -> "Flexmodel.Select.Pagination":
@@ -447,10 +448,8 @@ class Flexmodel(Flex):
             if results_per_page < 1:
                 results_per_page = 10
 
-            collection = self.model.database[self.model.collection_name]
-            count = collection.count_documents(self.statements)
-            if count > 0:
-                cursor = collection.find(self.statements).skip((current - 1) * results_per_page).sort(self.sorts).limit(results_per_page)
+            if (count := self.model.collection().count_documents(self.statements)) > 0:
+                cursor = self.model.collection().find(self.statements).skip((current - 1) * results_per_page).sort(self.sorts).limit(results_per_page)
                 results = [self.model.__class__(**document) for document in cursor]
 
             return Flexmodel.Select.Pagination(count, results, current=current, results_per_page=results_per_page)
@@ -474,9 +473,9 @@ class Flexmodel(Flex):
 
             def to_dict(self) -> dict[str, Any]:
                 return {
-                    "count": self.count,
                     "results": [item.to_dict() for item in self.results],
                     "pagination": {
+                        "count": self.count,
                         "current": self.current,
                         "results_per_page": self.results_per_page,
                     },
@@ -520,11 +519,11 @@ class Flexmodel(Flex):
             def __contains__(self, item: Any) -> dict[str, Any]:  # type: ignore
                 return {self.name: {"$in": item}}
 
-            def asc(self) -> dict[str, Any]:
-                return {self.name: 1}
+            def exists(self) -> dict[str, Any]:
+                return {self.name: {"$exists": True}}
 
-            def desc(self) -> dict[str, Any]:
-                return {self.name: -1}
+            def not_exists(self) -> dict[str, Any]:
+                return {self.name: {"$exists": False}}
 
             def is_true(self) -> dict[str, Any]:
                 return {self.name: {"$eq": True}}
@@ -567,6 +566,16 @@ class Flexmodel(Flex):
 
             def not_subset(self, items: list[Any]) -> dict[str, Any]:
                 return {self.name: {"$not": {"$all": items}}}
+
+            def function(self, js_code: str) -> dict[str, Any]:
+                return {self.name: {"$where": js_code}}
+
+            # sorting helpers
+            def asc(self) -> dict[str, Any]:
+                return {self.name: 1}
+
+            def desc(self) -> dict[str, Any]:
+                return {self.name: -1}
 
 
 def field(
