@@ -339,7 +339,31 @@ class Flexmodel(Flex):
 
         @property
         def query_string(self) -> str:
-            return json.dumps({"$where": self.statements, "$sort": self.sorts}, indent=4, ensure_ascii=False)
+            def serialize_for_display(obj):
+                """Custom serializer for displaying queries with functions"""
+                if isinstance(obj, dict):
+                    result = {}
+                    for key, value in obj.items():
+                        if key == "$__function__" and isinstance(value, dict):
+                            # Serialize function metadata in a readable way
+                            func_info = value.copy()
+                            if "functions" in func_info:
+                                func_list = []
+                                for func, args in func_info["functions"]:
+                                    func_name = getattr(func, '__name__', 'anonymous')
+                                    func_list.append({"function": func_name, "args": args})
+                                func_info["functions"] = func_list
+                            result[key] = func_info
+                        else:
+                            result[key] = serialize_for_display(value)
+                    return result
+                elif isinstance(obj, list):
+                    return [serialize_for_display(item) for item in obj]
+                else:
+                    return obj
+            
+            serialized = serialize_for_display({"$where": self.statements, "$sort": self.sorts})
+            return json.dumps(serialized, indent=4, ensure_ascii=False)
 
         @property
         def to_sql(self) -> str:
@@ -427,15 +451,140 @@ class Flexmodel(Flex):
             self.sorts = {}
             self.statements = {}
 
+        def _extract_function_filters(self, conditions: dict[str, Any]) -> tuple[dict[str, Any], list[tuple[str, dict]]]:
+            """
+            Extract function-based filters from conditions.
+            Returns a tuple of (mongodb_conditions, function_filters).
+            """
+            mongodb_conditions = {}
+            function_filters = []
+            
+            def process_condition(cond: dict[str, Any], parent_key: str = "") -> dict[str, Any]:
+                result = {}
+                for key, value in cond.items():
+                    if key in ["$and", "$or", "$not"]:
+                        # Process logical operators recursively
+                        if isinstance(value, list):
+                            processed = [process_condition(item) for item in value]
+                            result[key] = processed
+                        elif isinstance(value, dict):
+                            result[key] = process_condition(value)
+                        else:
+                            result[key] = value
+                    elif isinstance(value, dict) and "$__function__" in value:
+                        # Extract function filter
+                        function_filters.append((key, value["$__function__"]))
+                        # Don't add to MongoDB conditions
+                    else:
+                        result[key] = value
+                return result
+            
+            mongodb_conditions = process_condition(conditions)
+            return mongodb_conditions, function_filters
+
+        def _apply_function_filters(self, documents: list[dict[str, Any]], function_filters: list[tuple[str, dict]]) -> list[dict[str, Any]]:
+            """
+            Apply function-based filters to documents client-side.
+            """
+            if not function_filters:
+                return documents
+            
+            filtered = []
+            for doc in documents:
+                match = True
+                for field_name, func_info in function_filters:
+                    # Get the field value, supporting nested fields
+                    field_parts = field_name.split(".")
+                    value = doc
+                    for part in field_parts:
+                        if isinstance(value, dict) and part in value:
+                            value = value[part]
+                        else:
+                            value = None
+                            break
+                    
+                    # Apply each function in the chain
+                    # Create a simple document wrapper for the function
+                    class DocWrapper:
+                        def __init__(self, data):
+                            for k, v in data.items():
+                                setattr(self, k, v)
+                    
+                    doc_wrapper = DocWrapper(doc)
+                    result = value
+                    
+                    for func, args in func_info["functions"]:
+                        if args:
+                            result = func(doc_wrapper, *args)
+                        else:
+                            result = func(doc_wrapper)
+                        # Update doc_wrapper for next function in chain
+                        doc_wrapper = DocWrapper({field_name: result})
+                    
+                    # Apply comparison operator
+                    operator = func_info["operator"]
+                    compare_value = func_info["value"]
+                    
+                    if operator == "$eq":
+                        if result != compare_value:
+                            match = False
+                            break
+                    elif operator == "$ne":
+                        if result == compare_value:
+                            match = False
+                            break
+                    elif operator == "$lt":
+                        if not (result < compare_value):
+                            match = False
+                            break
+                    elif operator == "$gt":
+                        if not (result > compare_value):
+                            match = False
+                            break
+                    elif operator == "$lte":
+                        if not (result <= compare_value):
+                            match = False
+                            break
+                    elif operator == "$gte":
+                        if not (result >= compare_value):
+                            match = False
+                            break
+                
+                if match:
+                    filtered.append(doc)
+            
+            return filtered
+
         def count(self) -> int:
-            collection = self.model.database[self.model.collection_name]
-            return collection.count_documents(self.statements)
+            # Check if we have function filters
+            mongodb_conditions, function_filters = self._extract_function_filters(self.statements)
+            
+            if function_filters:
+                # Need to fetch all and filter client-side
+                collection = self.model.database[self.model.collection_name]
+                cursor = collection.find(mongodb_conditions)
+                documents = list(cursor)
+                filtered = self._apply_function_filters(documents, function_filters)
+                return len(filtered)
+            else:
+                collection = self.model.database[self.model.collection_name]
+                return collection.count_documents(self.statements)
 
         def fetch(self) -> Optional["Flexmodel"]:
+            mongodb_conditions, function_filters = self._extract_function_filters(self.statements)
             collection = self.model.database[self.model.collection_name]
-            document = collection.find_one(self.statements)
-            if document:
-                return self.model.__class__(**document)
+            
+            if function_filters:
+                # Fetch candidates and filter client-side
+                cursor = collection.find(mongodb_conditions).limit(100)  # Limit for safety
+                documents = list(cursor)
+                filtered = self._apply_function_filters(documents, function_filters)
+                if filtered:
+                    return self.model.__class__(**filtered[0])
+            else:
+                document = collection.find_one(mongodb_conditions)
+                if document:
+                    return self.model.__class__(**document)
 
         def fetch_all(self, current: int = 1, results_per_page: int = 10) -> "Flexmodel.Select.Pagination":
             count: int = 0
@@ -447,11 +596,26 @@ class Flexmodel(Flex):
             if results_per_page < 1:
                 results_per_page = 10
 
+            mongodb_conditions, function_filters = self._extract_function_filters(self.statements)
             collection = self.model.database[self.model.collection_name]
-            count = collection.count_documents(self.statements)
-            if count > 0:
-                cursor = collection.find(self.statements).skip((current - 1) * results_per_page).sort(self.sorts).limit(results_per_page)
-                results = [self.model.__class__(**document) for document in cursor]
+            
+            if function_filters:
+                # Fetch all matching MongoDB conditions, then filter client-side
+                cursor = collection.find(mongodb_conditions).sort(self.sorts)
+                documents = list(cursor)
+                filtered = self._apply_function_filters(documents, function_filters)
+                count = len(filtered)
+                
+                # Apply pagination to filtered results
+                start = (current - 1) * results_per_page
+                end = start + results_per_page
+                paginated = filtered[start:end]
+                results = [self.model.__class__(**document) for document in paginated]
+            else:
+                count = collection.count_documents(mongodb_conditions)
+                if count > 0:
+                    cursor = collection.find(mongodb_conditions).skip((current - 1) * results_per_page).sort(self.sorts).limit(results_per_page)
+                    results = [self.model.__class__(**document) for document in cursor]
 
             return Flexmodel.Select.Pagination(count, results, current=current, results_per_page=results_per_page)
 
@@ -483,9 +647,10 @@ class Flexmodel(Flex):
                 }
 
         class Statement:
-            def __init__(self, name: str, model: Any):
+            def __init__(self, name: str, model: Any, functions: Optional[list[tuple[Callable, tuple]]] = None):
                 self.name: str = name
                 self.model: Any = model
+                self.functions: list[tuple[Callable, tuple]] = functions if functions is not None else []
 
             def __getattr__(self, name: str) -> "Flexmodel.Select.Statement":
                 if not isinstance(self.model, Flex) or name not in self.model.schema.fields:
@@ -500,21 +665,33 @@ class Flexmodel(Flex):
                 return Flexmodel.Select.Statement(f"{self.name}.{name}", self.model.__dict__.get(name, self.model.schema[name].default))
 
             def __eq__(self, value: Any) -> dict[str, Any]:  # type: ignore
+                if self.functions:
+                    return {self.name: {"$__function__": {"functions": self.functions, "operator": "$eq", "value": value}}}
                 return {self.name: value}
 
             def __ne__(self, value: Any) -> dict[str, Any]:  # type: ignore
+                if self.functions:
+                    return {self.name: {"$__function__": {"functions": self.functions, "operator": "$ne", "value": value}}}
                 return {self.name: {"$ne": value}}
 
             def __lt__(self, value: Any) -> dict[str, Any]:  # type: ignore
+                if self.functions:
+                    return {self.name: {"$__function__": {"functions": self.functions, "operator": "$lt", "value": value}}}
                 return {self.name: {"$lt": value}}
 
             def __gt__(self, value: Any) -> dict[str, Any]:  # type: ignore
+                if self.functions:
+                    return {self.name: {"$__function__": {"functions": self.functions, "operator": "$gt", "value": value}}}
                 return {self.name: {"$gt": value}}
 
             def __le__(self, value: Any) -> dict[str, Any]:  # type: ignore
+                if self.functions:
+                    return {self.name: {"$__function__": {"functions": self.functions, "operator": "$lte", "value": value}}}
                 return {self.name: {"$lte": value}}
 
             def __ge__(self, value: Any) -> dict[str, Any]:  # type: ignore
+                if self.functions:
+                    return {self.name: {"$__function__": {"functions": self.functions, "operator": "$gte", "value": value}}}
                 return {self.name: {"$gte": value}}
 
             def __contains__(self, item: Any) -> dict[str, Any]:  # type: ignore
@@ -567,6 +744,31 @@ class Flexmodel(Flex):
 
             def not_subset(self, items: list[Any]) -> dict[str, Any]:
                 return {self.name: {"$not": {"$all": items}}}
+
+            def function(self, func: Callable, args: tuple = ()) -> "Flexmodel.Select.Statement":
+                """
+                Apply a function to the field value. Returns a new Statement instance 
+                that allows chaining additional functions or comparison operators.
+                
+                Args:
+                    func: A callable that takes a document (or the result of previous functions) as first argument
+                    args: Optional tuple of additional arguments to pass to the function
+                
+                Returns:
+                    A new Statement instance with the function added to the chain
+                    
+                Example:
+                    def apply_discount(document, discount: float):
+                        return document.price * discount
+                    
+                    select.where(
+                        select.price.function(apply_discount, args=(0.75,)) > 50
+                    )
+                """
+                # Create a new Statement with the function added to the chain
+                new_functions = self.functions.copy()
+                new_functions.append((func, args))
+                return Flexmodel.Select.Statement(self.name, self.model, functions=new_functions)
 
 
 def field(
