@@ -489,36 +489,28 @@ class Flexmodel(Flex):
             if not function_filters:
                 return documents
             
+            # Define DocWrapper class once, outside the loop
+            class DocWrapper:
+                """Simple wrapper to allow dot notation access to document fields"""
+                def __init__(self, data):
+                    for k, v in data.items():
+                        setattr(self, k, v)
+            
             filtered = []
             for doc in documents:
                 match = True
                 for field_name, func_info in function_filters:
-                    # Get the field value, supporting nested fields
-                    field_parts = field_name.split(".")
-                    value = doc
-                    for part in field_parts:
-                        if isinstance(value, dict) and part in value:
-                            value = value[part]
-                        else:
-                            value = None
-                            break
-                    
                     # Apply each function in the chain
-                    # Create a simple document wrapper for the function
-                    class DocWrapper:
-                        def __init__(self, data):
-                            for k, v in data.items():
-                                setattr(self, k, v)
-                    
                     doc_wrapper = DocWrapper(doc)
-                    result = value
+                    result = None
                     
                     for func, args in func_info["functions"]:
                         if args:
                             result = func(doc_wrapper, *args)
                         else:
                             result = func(doc_wrapper)
-                        # Update doc_wrapper for next function in chain
+                        # Update doc_wrapper with the result for next function in chain
+                        # This allows chained functions to process the result of previous functions
                         doc_wrapper = DocWrapper({field_name: result})
                     
                     # Apply comparison operator
@@ -570,14 +562,30 @@ class Flexmodel(Flex):
                 collection = self.model.database[self.model.collection_name]
                 return collection.count_documents(self.statements)
 
-        def fetch(self) -> Optional["Flexmodel"]:
+        def fetch(self, function_filter_limit: int = 1000) -> Optional["Flexmodel"]:
+            """
+            Fetch a single document matching the query.
+            
+            Args:
+                function_filter_limit: Maximum number of documents to fetch from database
+                                      when using function filters (default: 1000)
+            """
             mongodb_conditions, function_filters = self._extract_function_filters(self.statements)
             collection = self.model.database[self.model.collection_name]
             
             if function_filters:
                 # Fetch candidates and filter client-side
-                cursor = collection.find(mongodb_conditions).limit(100)  # Limit for safety
+                # Note: Function filters require client-side filtering, so we need to fetch
+                # multiple documents. The limit prevents memory issues with large collections.
+                cursor = collection.find(mongodb_conditions).limit(function_filter_limit)
                 documents = list(cursor)
+                
+                if len(documents) == function_filter_limit:
+                    FlexmodelException.silent_log(
+                        f"Warning: Reached function_filter_limit ({function_filter_limit}) in fetch(). "
+                        "Consider adding MongoDB-compatible filters or increasing the limit."
+                    )
+                
                 filtered = self._apply_function_filters(documents, function_filters)
                 if filtered:
                     return self.model.__class__(**filtered[0])
@@ -586,7 +594,17 @@ class Flexmodel(Flex):
                 if document:
                     return self.model.__class__(**document)
 
-        def fetch_all(self, current: int = 1, results_per_page: int = 10) -> "Flexmodel.Select.Pagination":
+        def fetch_all(self, current: int = 1, results_per_page: int = 10, function_filter_limit: Optional[int] = None) -> "Flexmodel.Select.Pagination":
+            """
+            Fetch all documents matching the query with pagination.
+            
+            Args:
+                current: Current page number (min 1)
+                results_per_page: Number of results per page (min 1)
+                function_filter_limit: Maximum number of documents to fetch when using
+                                      function filters. If None, fetches all documents.
+                                      Use with caution on large collections.
+            """
             count: int = 0
             results: list["Flexmodel"] = []
 
@@ -601,8 +619,20 @@ class Flexmodel(Flex):
             
             if function_filters:
                 # Fetch all matching MongoDB conditions, then filter client-side
+                # Warning: This loads all documents into memory
                 cursor = collection.find(mongodb_conditions).sort(self.sorts)
+                
+                if function_filter_limit:
+                    cursor = cursor.limit(function_filter_limit)
+                
                 documents = list(cursor)
+                
+                if function_filter_limit and len(documents) == function_filter_limit:
+                    FlexmodelException.silent_log(
+                        f"Warning: Reached function_filter_limit ({function_filter_limit}) in fetch_all(). "
+                        "Some results may be missing. Consider adding MongoDB-compatible filters or increasing the limit."
+                    )
+                
                 filtered = self._apply_function_filters(documents, function_filters)
                 count = len(filtered)
                 
