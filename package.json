@@ -6,9 +6,10 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "node examples-js/basic.js",
+    "test": "node examples-js/validation_test.js",
     "example:basic": "node examples-js/basic.js",
     "example:query": "node examples-js/query_operators_example.js",
+    "example:validation": "node examples-js/validation_test.js",
     "lint": "eslint src-js --ext .ts"
   },
   "keywords": [

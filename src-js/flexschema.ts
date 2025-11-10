@@ -449,7 +449,7 @@ export class Flexmodel extends Flex {
 
     const collection = (this.constructor as typeof Flexmodel).collection();
     const result = await collection.replaceOne(
-      { _id: this.id },
+      { _id: this.id } as unknown as Filter<Document>,
       this.toDict(commitAll) as Document,
       { upsert: true }
     );
@@ -459,7 +459,7 @@ export class Flexmodel extends Flex {
 
   async delete(): Promise<boolean> {
     const collection = (this.constructor as typeof Flexmodel).collection();
-    const result = await collection.deleteOne({ _id: this.id });
+    const result = await collection.deleteOne({ _id: this.id } as unknown as Filter<Document>);
     return result.deletedCount > 0;
   }
 
@@ -499,7 +499,7 @@ export class Flexmodel extends Flex {
   }
 
   static async load(id: string): Promise<Flexmodel | null> {
-    const document = await this.collection().findOne({ _id: id });
+    const document = await this.collection().findOne({ _id: id } as unknown as Filter<Document>);
     if (document) {
       return new this(document as Record<string, any>);
     }
@@ -677,7 +677,7 @@ export class Select {
       };
 
       if (Object.keys(this.sorts).length > 0) {
-        options.sort = this.sorts;
+        options.sort = this.sorts as any;
       }
 
       const cursor = collection.find(this.statements as Filter<Document>, options);
@@ -715,7 +715,7 @@ const selectProxyHandler: ProxyHandler<Select> = {
 // Override Select constructor to return a proxy
 const OriginalSelect = Select;
 (Select as any) = new Proxy(OriginalSelect, {
-  construct(target, args) {
+  construct(target: any, args: any[]) {
     const instance = new target(...args);
     return new Proxy(instance, selectProxyHandler);
   },
