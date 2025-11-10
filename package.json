@@ -10,6 +10,7 @@
     "example:basic": "node examples-js/basic.js",
     "example:query": "node examples-js/query_operators_example.js",
     "example:validation": "node examples-js/validation_test.js",
+    "example:typescript": "tsc examples-js/typescript_example.ts --outDir /tmp && node /tmp/typescript_example.js",
     "lint": "eslint src-js --ext .ts"
   },
   "keywords": [
