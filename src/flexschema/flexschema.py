@@ -642,6 +642,7 @@ class FlexmodelLite(Flex):
             raise FlexmodelException("Cannot attach to the database: invalid database type. Only 'str' or 'sqlite3.Connection' is supported.")
 
         cls.connection.row_factory = sqlite3.Row
+        cls.connection.create_function("regexp", 2, lambda pattern, value: 1 if re.search(pattern, value or "") else 0)
         cls.table_name = table_name or cls.__name__.lower() + "s"
         cls._ensure_table()
 
@@ -868,6 +869,103 @@ class FlexmodelLite(Flex):
             self.statements = {}
 
         @staticmethod
+        def _json_path(field: str) -> str:
+            return "$." + field.replace(".", ".")
+
+        def _sql_field_expr(self, field: str) -> str:
+            if field in ("_id", "_updated_at"):
+                return field
+            return f"json_extract(document, '{self._json_path(field)}')"
+
+        def _build_condition_sql(self, condition: dict[str, Any], params: list[Any]) -> str:
+            clauses: list[str] = []
+
+            for key, value in condition.items():
+                if key == "$and":
+                    parts = [self._build_condition_sql(item, params) for item in value]
+                    parts = [part for part in parts if part]
+                    if parts:
+                        clauses.append("(" + " AND ".join(parts) + ")")
+                elif key == "$or":
+                    parts = [self._build_condition_sql(item, params) for item in value]
+                    parts = [part for part in parts if part]
+                    if parts:
+                        clauses.append("(" + " OR ".join(parts) + ")")
+                elif key == "$not":
+                    inner = self._build_condition_sql(value, params)
+                    if inner:
+                        clauses.append("NOT (" + inner + ")")
+                else:
+                    field_expr = self._sql_field_expr(key)
+                    if isinstance(value, dict):
+                        for op, val in value.items():
+                            if op == "$options":
+                                continue
+                            if op == "$eq":
+                                clauses.append(f"{field_expr} = ?")
+                                params.append(val)
+                            elif op == "$ne":
+                                clauses.append(f"{field_expr} != ?")
+                                params.append(val)
+                            elif op == "$lt":
+                                clauses.append(f"{field_expr} < ?")
+                                params.append(val)
+                            elif op == "$gt":
+                                clauses.append(f"{field_expr} > ?")
+                                params.append(val)
+                            elif op == "$lte":
+                                clauses.append(f"{field_expr} <= ?")
+                                params.append(val)
+                            elif op == "$gte":
+                                clauses.append(f"{field_expr} >= ?")
+                                params.append(val)
+                            elif op == "$in":
+                                placeholders = ", ".join(["?"] * len(val)) if val else ""
+                                clauses.append(f"{field_expr} IN ({placeholders})")
+                                params.extend(list(val))
+                            elif op == "$nin":
+                                placeholders = ", ".join(["?"] * len(val)) if val else ""
+                                clauses.append(f"{field_expr} NOT IN ({placeholders})")
+                                params.extend(list(val))
+                            elif op == "$regex":
+                                clauses.append(f"{field_expr} REGEXP ?")
+                                params.append(val)
+                            elif op == "$exists":
+                                if bool(val):
+                                    clauses.append(f"json_type(document, '{self._json_path(key)}') IS NOT NULL")
+                                else:
+                                    clauses.append(f"json_type(document, '{self._json_path(key)}') IS NULL")
+                            elif op == "$all":
+                                for item in val:
+                                    clauses.append(
+                                        f"EXISTS (SELECT 1 FROM json_each(document, '{self._json_path(key)}') WHERE value = ?)"
+                                    )
+                                    params.append(item)
+                            elif op == "$not":
+                                inner = self._build_condition_sql({key: val}, params)
+                                if inner:
+                                    clauses.append(f"NOT ({inner})")
+                            elif op == "$where":
+                                continue
+                    else:
+                        clauses.append(f"{field_expr} = ?")
+                        params.append(value)
+
+            return " AND ".join([clause for clause in clauses if clause])
+
+        def _build_order_sql(self) -> str:
+            if not self.sorts:
+                return ""
+
+            parts: list[str] = []
+            for field, direction in self.sorts.items():
+                expr = self._sql_field_expr(field)
+                order = "ASC" if direction >= 0 else "DESC"
+                parts.append(f"{expr} {order}")
+
+            return " ORDER BY " + ", ".join(parts)
+
+        @staticmethod
         def _get_value(data: dict[str, Any], path: str) -> tuple[bool, Any]:
             current: Any = data
             for part in path.split("."):
@@ -959,6 +1057,7 @@ class FlexmodelLite(Flex):
                 return items
 
             results = items[:]
+            
             for field, direction in reversed(list(self.sorts.items())):
                 results.sort(
                     key=lambda item: self._get_value(item[1], field)[1],
@@ -967,10 +1066,21 @@ class FlexmodelLite(Flex):
             return results
 
         def count(self) -> int:
-            return len(self.fetch_all().results)
+            params: list[Any] = []
+            where_sql = self._build_condition_sql(self.statements, params) if self.statements else ""
+            query = f"SELECT COUNT(*) AS count FROM {self.model.table_name}"
+
+            if where_sql:
+                query += " WHERE " + where_sql
+
+            cursor = self.model.__class__._execute(query, tuple(params))
+            item = cursor.fetchone()
+
+            return int(item["count"]) if item else 0
 
         def fetch(self) -> Optional["FlexmodelLite"]:
             pagination = self.fetch_all(current=1, results_per_page=1)
+
             return pagination.results[0] if pagination.results else None
 
         def fetch_all(self, current: int = 1, results_per_page: int = 10) -> "FlexmodelLite.Select.Pagination":
@@ -983,17 +1093,36 @@ class FlexmodelLite(Flex):
             if results_per_page < 1:
                 results_per_page = 10
 
-            items = [(item, item.to_dict(commit=False)) for item in self.model.__class__.all()]
+            params: list[Any] = []
+            where_sql = self._build_condition_sql(self.statements, params) if self.statements else ""
+            order_sql = self._build_order_sql()
 
-            if self.statements:
-                items = [item for item in items if self._eval_condition(item[1], self.statements)]
+            count_query = f"SELECT COUNT(*) AS count FROM {self.model.table_name}"
 
-            items = self._apply_sort(items)
-            count = len(items)
+            if where_sql:
+                count_query += " WHERE " + where_sql
 
-            start = (current - 1) * results_per_page
-            end = start + results_per_page
-            results = [item[0] for item in items[start:end]]
+            count_cursor = self.model.__class__._execute(count_query, tuple(params))
+            count_item = count_cursor.fetchone()
+            count = int(count_item["count"]) if count_item else 0
+
+            query = f"SELECT _id, _updated_at, document FROM {self.model.table_name}"
+
+            if where_sql:
+                query += " WHERE " + where_sql
+
+            query += order_sql
+            query += " LIMIT ? OFFSET ?"
+            params_with_paging = params + [results_per_page, (current - 1) * results_per_page]
+
+            cursor = self.model.__class__._execute(query, tuple(params_with_paging))
+            items = cursor.fetchall()
+
+            for item in items:
+                data = json.loads(item["document"])
+                data.setdefault("_id", item["_id"])
+                data.setdefault("_updated_at", item["_updated_at"])
+                results.append(self.model.__class__(**data))
 
             return FlexmodelLite.Select.Pagination(count, results, current=current, results_per_page=results_per_page)
 
