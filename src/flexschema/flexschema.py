@@ -937,9 +937,7 @@ class FlexmodelLite(Flex):
                                     clauses.append(f"json_type(document, '{self._json_path(key)}') IS NULL")
                             elif op == "$all":
                                 for item in val:
-                                    clauses.append(
-                                        f"EXISTS (SELECT 1 FROM json_each(document, '{self._json_path(key)}') WHERE value = ?)"
-                                    )
+                                    clauses.append(f"EXISTS (SELECT 1 FROM json_each(document, '{self._json_path(key)}') WHERE value = ?)")
                                     params.append(item)
                             elif op == "$not":
                                 inner = self._build_condition_sql({key: val}, params)
@@ -1057,7 +1055,7 @@ class FlexmodelLite(Flex):
                 return items
 
             results = items[:]
-            
+
             for field, direction in reversed(list(self.sorts.items())):
                 results.sort(
                     key=lambda item: self._get_value(item[1], field)[1],

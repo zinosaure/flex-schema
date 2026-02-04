@@ -1,6 +1,7 @@
 from typing import cast
 from flexschema import Schema, Flexmodel, FlexmodelLite, field
 
+
 class Product(Flexmodel):
     schema: Schema = Schema.ident(
         name=field(str, nullable=False),
@@ -15,10 +16,12 @@ class Product(Flexmodel):
 
         super().__init__(**kwargs)
 
+
 # Choose storage
 choice = input("Select storage [mongo/sqlite]: ").strip().lower()
 
 if choice.startswith("s"):
+
     class ProductLite(FlexmodelLite):
         schema: Schema = Product.schema
 
@@ -56,7 +59,7 @@ else:
 
         client = MongoClient("mongodb://localhost:27017/testdb", serverSelectionTimeoutMS=1000)
         Product.attach(client, "products")
-        
+
         # Create a select query
         select = Product.select()
 
@@ -74,7 +77,7 @@ else:
         print("Query built successfully!")
         print(f"Query: {select.query_string}")
         print(f"SQL: {select.to_sql}")
-        
+
         # Try to fetch results (will fail if MongoDB is not running)
         try:
             for item in select.fetch_all():
@@ -83,7 +86,7 @@ else:
         except Exception as e:
             print(f"\n⚠️  Could not fetch from database: {e}")
             print("This is expected if MongoDB is not running.")
-            
+
     except Exception as e:
         print(f"⚠️  MongoDB not available: {e}")
         print("To run this example with database access, start MongoDB at localhost:27017")

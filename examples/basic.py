@@ -66,6 +66,7 @@ if __name__ == "__main__":
     choice = input("Select storage [mongo/sqlite]: ").strip().lower()
 
     if choice.startswith("s"):
+
         class LoginLite(FlexmodelLite):
             schema: Schema = Login.schema
 
