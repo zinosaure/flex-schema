@@ -1,8 +1,7 @@
 import time
 
 from typing import Any
-from pymongo import MongoClient
-from flexschema import Schema, Flex, Flexmodel, field, field_constraint
+from flexschema import Schema, Flex, Flexmodel, FlexmodelLite, field, field_constraint
 
 
 class Login(Flexmodel):
@@ -64,38 +63,87 @@ class User(Flexmodel):
 
 
 if __name__ == "__main__":
-    try:
-        # Try to connect to MongoDB
-        User.attach(client := MongoClient("mongodb://localhost:27017/testdb", serverSelectionTimeoutMS=1000), "users")
-        Login.attach(client, "logins")
+    choice = input("Select storage [mongo/sqlite]: ").strip().lower()
 
-        user = User(
-            name="john doe",
-            email="john.doe@example.com",
-            date_of_birth="1990-01-01",
-            login=Login(username="johndoe", password="securepassword"),
-            tags=["user", "admin"],
-            is_active=True,
-            score=100.0,
-            metadata=Metadata(created_by="admin", last_login=int(time.time())),
-        )
+    if choice.startswith("s"):
+        class LoginLite(FlexmodelLite):
+            schema: Schema = Login.schema
 
-        if user.commit():
+        class UserLite(FlexmodelLite):
+            schema: Schema = User.schema
+
+        try:
+            UserLite.attach(":memory:", "users")
+            LoginLite.attach(UserLite.connection, "logins")
+
+            user = UserLite(
+                name="john doe",
+                email="john.doe@example.com",
+                date_of_birth="1990-01-01",
+                login=LoginLite(username="johndoe", password="securepassword"),
+                tags=["user", "admin"],
+                is_active=True,
+                score=100.0,
+                metadata=Metadata(created_by="admin", last_login=int(time.time())),
+            )
+
+            user2 = UserLite(
+                name="jane doe",
+                email="jane.doe@example.com",
+                date_of_birth="1992-05-12",
+                login=LoginLite(username="janedoe", password="securepassword"),
+                tags=["user"],
+                is_active=True,
+                score=80.0,
+                metadata=Metadata(created_by="admin", last_login=int(time.time())),
+            )
+
+            if user.commit():
+                print(user.to_json(indent=4))
+                user2.commit()
+                select = UserLite.select()
+                results = select.fetch_all()
+                print("\nSQLite users:")
+                for item in results:
+                    print(f"- {item.name} ({item.email})")
+            else:
+                print("Failed to save user:\n", user.evaluate())
+        except Exception as e:
+            print(f"⚠️  SQLite not available: {e}")
+    else:
+        try:
+            from pymongo import MongoClient
+
+            User.attach(client := MongoClient("mongodb://localhost:27017/testdb", serverSelectionTimeoutMS=1000), "users")
+            Login.attach(client, "logins")
+
+            user = User(
+                name="john doe",
+                email="john.doe@example.com",
+                date_of_birth="1990-01-01",
+                login=Login(username="johndoe", password="securepassword"),
+                tags=["user", "admin"],
+                is_active=True,
+                score=100.0,
+                metadata=Metadata(created_by="admin", last_login=int(time.time())),
+            )
+
+            if user.commit():
+                print(user.to_json(indent=4))
+            else:
+                print("Failed to save user:\n", user.evaluate())
+        except Exception as e:
+            print(f"⚠️  MongoDB not available: {e}")
+            print("\nShowing user data without saving to database:")
+            user = User(
+                name="john doe",
+                email="john.doe@example.com",
+                date_of_birth="1990-01-01",
+                login=Login(username="johndoe", password="securepassword"),
+                tags=["user", "admin"],
+                is_active=True,
+                score=100.0,
+                metadata=Metadata(created_by="admin", last_login=int(time.time())),
+            )
             print(user.to_json(indent=4))
-        else:
-            print("Failed to save user:\n", user.evaluate())
-    except Exception as e:
-        print(f"⚠️  MongoDB not available: {e}")
-        print("\nShowing user data without saving to database:")
-        user = User(
-            name="john doe",
-            email="john.doe@example.com",
-            date_of_birth="1990-01-01",
-            login=Login(username="johndoe", password="securepassword"),
-            tags=["user", "admin"],
-            is_active=True,
-            score=100.0,
-            metadata=Metadata(created_by="admin", last_login=int(time.time())),
-        )
-        print(user.to_json(indent=4))
-        print("\nTo save to database, start MongoDB at localhost:27017")
+            print("\nTo save to database, start MongoDB at localhost:27017")

@@ -2,7 +2,13 @@ import re
 import json
 import uuid
 import logging
-import pymongo
+
+from typing import TYPE_CHECKING
+
+try:
+    import pymongo
+except Exception:
+    pymongo = None
 
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Type, Union
@@ -10,6 +16,9 @@ from typing import Any, Callable, Optional, Type, Union
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("pymongo").setLevel(logging.WARNING)
+
+if TYPE_CHECKING:
+    import pymongo as pymongo_typing
 
 
 class SchemaDefinitionException(Exception):
@@ -227,7 +236,7 @@ class Flex:
 
 class Flexmodel(Flex):
     schema: Schema = Schema.ident()
-    database: pymongo.database.Database
+    database: Any
     collection_name: str = "collections"
 
     @property
@@ -269,7 +278,10 @@ class Flexmodel(Flex):
         return self.collection().delete_one({"_id": self.id}).deleted_count > 0
 
     @classmethod
-    def attach(cls, database: Union[pymongo.MongoClient, pymongo.database.Database], collection_name: Optional[str] = None):
+    def attach(cls, database: Any, collection_name: Optional[str] = None):
+        if pymongo is None:
+            raise FlexmodelException("Cannot attach to MongoDB: pymongo is not installed. Install pymongo or use FlexmodelLite for SQLite.")
+
         # Accept both MongoClient and Database for flexibility
         if isinstance(database, pymongo.MongoClient):
             # If MongoClient is provided, get the default database from the connection string
@@ -294,7 +306,10 @@ class Flexmodel(Flex):
         cls.collection_name = "collections"
 
     @classmethod
-    def collection(cls) -> pymongo.collection.Collection:
+    def collection(cls) -> Any:
+        if pymongo is None:
+            raise FlexmodelException("MongoDB is not available because pymongo is not installed.")
+
         return cls.database[cls.collection_name]
 
     @classmethod
@@ -351,14 +366,24 @@ class Flexmodel(Flex):
 
                 for key, value in condition.items():
                     if key == "$and":
-                        clauses.append("(" + " AND ".join([parse_condition(item) for item in value]) + ")")
+                        parts = [parse_condition(item) for item in value]
+                        parts = [part for part in parts if part]
+                        if parts:
+                            clauses.append("(" + " AND ".join(parts) + ")")
                     elif key == "$or":
-                        clauses.append("(" + " OR ".join([parse_condition(item) for item in value]) + ")")
+                        parts = [parse_condition(item) for item in value]
+                        parts = [part for part in parts if part]
+                        if parts:
+                            clauses.append("(" + " OR ".join(parts) + ")")
                     elif key == "$not":
-                        clauses.append("NOT (" + parse_condition(value) + ")")
+                        inner = parse_condition(value)
+                        if inner:
+                            clauses.append("NOT (" + inner + ")")
                     else:
                         if isinstance(value, dict):
                             for op, val in value.items():
+                                if op == "$eq":
+                                    clauses.append(f"{key} = '{val}'")
                                 if op == "$ne":
                                     clauses.append(f"{key} != '{val}'")
                                 elif op == "$lt":
@@ -386,7 +411,7 @@ class Flexmodel(Flex):
                         else:
                             clauses.append(f"{key} = '{value}'")
 
-                return " AND ".join(clauses)
+                return " AND ".join([clause for clause in clauses if clause])
 
             return sql + " WHERE " + parse_condition(self.statements)
 

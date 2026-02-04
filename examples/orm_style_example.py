@@ -2,8 +2,7 @@
 Comprehensive example demonstrating the ORM-style query API
 """
 from typing import cast
-from pymongo import MongoClient
-from flexschema import Schema, Flexmodel, field
+from flexschema import Schema, Flexmodel, FlexmodelLite, field
 
 
 class Product(Flexmodel):
@@ -25,17 +24,35 @@ class Product(Flexmodel):
 if __name__ == "__main__":
     print("=== ORM-Style Query API Examples ===\n")
     
-    # Try to connect to MongoDB (will work without actual connection for demo)
-    try:
-        client = MongoClient("mongodb://localhost:27017/testdb", serverSelectionTimeoutMS=1000)
-        Product.attach(client, "products")
-        print("✓ Connected to MongoDB\n")
-    except Exception as e:
-        print("⚠️  MongoDB not available. Showing API examples only.\n")
+    choice = input("Select storage [mongo/sqlite]: ").strip().lower()
+    if choice.startswith("s"):
+        class ProductLite(FlexmodelLite):
+            schema: Schema = Product.schema
+
+        try:
+            ProductLite.attach(":memory:", "products")
+            ProductLite(name="Laptop", price=999.99, in_stock=True, category="electronics").commit()
+            ProductLite(name="Mouse", price=25.0, in_stock=True, category="electronics").commit()
+            ProductLite(name="Chair", price=120.0, in_stock=False, category="furniture").commit()
+            select = ProductLite.select()
+            print("✓ Connected to SQLite\n")
+        except Exception as e:
+            print("⚠️  SQLite not available. Showing API examples only.\n")
+            select = Product.select()
+    else:
+        # Try to connect to MongoDB (will work without actual connection for demo)
+        try:
+            from pymongo import MongoClient
+
+            client = MongoClient("mongodb://localhost:27017/testdb", serverSelectionTimeoutMS=1000)
+            Product.attach(client, "products")
+            select = Product.select()
+            print("✓ Connected to MongoDB\n")
+        except Exception as e:
+            print("⚠️  MongoDB not available. Showing API examples only.\n")
+            select = Product.select()
     
     # Create a Select query builder
-    select = Product.select()
-    
     print("1. Basic equality query:")
     select.where(select.name == "Laptop")
     print(f"   Query: {select.query_string}")

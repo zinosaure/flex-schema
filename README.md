@@ -13,6 +13,7 @@ A flexible and powerful schema validation library for Python with MongoDB integr
 - **Auto-generated IDs**: Automatic UUID generation and timestamp tracking
 - **Callbacks**: Transform field values with custom callback functions
 - **Pagination**: Built-in pagination support for queries
+- **SQLite Lite Persistence**: Simple SQLite storage with `_id` primary key, `_updated_at` timestamp, and JSON document column
 
 ## Installation
 
@@ -21,6 +22,9 @@ Install from GitHub for the latest changes:
 ```bash
 pip install git+https://github.com/zinosaure/flex-schema.git@main
 ```
+
+**Optional dependencies:**
+- `pymongo` is required only for MongoDB usage. SQLite usage with `FlexmodelLite` does not require `pymongo`.
 
 ## Quick Start
 
@@ -156,6 +160,56 @@ product.commit()
 - `load(_id)`: Load a document by ID
 - `count()`: Count documents in collection
 - `select()`: Create an ORM-style query builder
+
+### FlexmodelLite (SQLite)
+
+`FlexmodelLite` provides a lightweight SQLite-backed persistence layer. Records are stored in a single table with:
+
+- `_id` as `PRIMARY KEY`
+- `_updated_at` as `DATETIME` (ISO 8601 string)
+- `document` as JSON text
+
+```python
+from flexschema import Schema, FlexmodelLite, field, field_constraint
+
+class Note(FlexmodelLite):
+    schema: Schema = Schema.ident(
+        title=field(str, nullable=False),
+        body=field(str, default=""),
+        tags=field(list, default=[], constraint=field_constraint(item_type=str)),
+    )
+
+# Attach to SQLite (file path or :memory:)
+Note.attach(":memory:", "notes")
+
+note = Note(title="Hello", body="World", tags=["demo", "lite"])
+note.commit()
+
+loaded = Note.load(note.id)
+print(loaded.to_json(indent=2))
+
+select = Note.select()
+select.where(select.title == "Hello")
+results = select.fetch_all()
+print(len(results))
+```
+
+**Instance Methods:**
+- `commit(commit_all=True)`: Save to SQLite
+- `delete()`: Remove from SQLite
+- `id`: Get the document ID
+- `updated_at`: Get last update timestamp
+
+**Class Methods:**
+- `attach(database, collection_name=None)`: Connect to SQLite (path or `sqlite3.Connection`)
+- `detach()`: Disconnect from SQLite
+- `load(_id)`: Load a document by ID
+- `count()`: Count rows in table
+- `all()`: Load all rows
+- `select()`: ORM-style query builder (same API as `Flexmodel`)
+
+**Notes:**
+- `select().fetch_all()` returns a pagination object (with `results`, `count`, etc.), same as `Flexmodel`.
 
 ## ORM-Style Query API
 
