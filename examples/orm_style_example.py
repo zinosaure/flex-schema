@@ -1,8 +1,9 @@
 """
 Comprehensive example demonstrating the ORM-style query API
 """
-from typing import cast
-from flexschema import Schema, Flexmodel, FlexmodelLite, field
+
+from pymongo import MongoClient
+from flexschema import Schema, Flexmodel, field
 
 
 class Product(Flexmodel):
@@ -23,165 +24,125 @@ class Product(Flexmodel):
 
 if __name__ == "__main__":
     print("=== ORM-Style Query API Examples ===\n")
-    
-    choice = input("Select storage [mongo/sqlite]: ").strip().lower()
-    if choice.startswith("s"):
-        class ProductLite(FlexmodelLite):
-            schema: Schema = Product.schema
 
-        try:
-            ProductLite.attach(":memory:", "products")
-            ProductLite(name="Laptop", price=999.99, in_stock=True, category="electronics").commit()
-            ProductLite(name="Mouse", price=25.0, in_stock=True, category="electronics").commit()
-            ProductLite(name="Chair", price=120.0, in_stock=False, category="furniture").commit()
-            select = ProductLite.select()
-            print("✓ Connected to SQLite\n")
-        except Exception as e:
-            print("⚠️  SQLite not available. Showing API examples only.\n")
-            select = Product.select()
-    else:
-        # Try to connect to MongoDB (will work without actual connection for demo)
-        try:
-            from pymongo import MongoClient
+    # Try to connect to MongoDB (will work without actual connection for demo)
+    try:
+        client = MongoClient("mongodb://localhost:27017/testdb", serverSelectionTimeoutMS=1000)
+        Product.attach(client, "products")
+        select = Product.select()
+        print("✓ Connected to MongoDB\n")
+    except Exception as e:
+        print("⚠️  MongoDB not available. Showing API examples only.\n")
+        select = Product.select()
 
-            client = MongoClient("mongodb://localhost:27017/testdb", serverSelectionTimeoutMS=1000)
-            Product.attach(client, "products")
-            select = Product.select()
-            print("✓ Connected to MongoDB\n")
-        except Exception as e:
-            print("⚠️  MongoDB not available. Showing API examples only.\n")
-            select = Product.select()
-    
     # Create a Select query builder
     print("1. Basic equality query:")
     select.where(select.name == "Laptop")
     print(f"   Query: {select.query_string}")
     print(f"   SQL equivalent: {select.to_sql}\n")
     select.discard()  # Clear previous query
-    
+
     print("2. Comparison operators:")
     select.where(select.price > 100)
     print(f"   price > 100: {select.to_sql}")
     select.discard()
-    
+
     select.where(select.price >= 50)
     print(f"   price >= 50: {select.to_sql}")
     select.discard()
-    
+
     select.where(select.price < 1000)
     print(f"   price < 1000: {select.to_sql}")
     select.discard()
-    
+
     select.where(select.price <= 500)
     print(f"   price <= 500: {select.to_sql}")
     select.discard()
-    
+
     select.where(select.name != "Mouse")
     print(f"   name != 'Mouse': {select.to_sql}\n")
     select.discard()
-    
+
     print("3. Boolean queries:")
     select.where(select.in_stock.is_true())
     print(f"   in_stock is true: {select.to_sql}")
     select.discard()
-    
+
     select.where(select.in_stock.is_false())
     print(f"   in_stock is false: {select.to_sql}\n")
     select.discard()
-    
+
     print("4. Null checks:")
     select.where(select.name.is_null())
     print(f"   name is null: {select.query_string}")
     select.discard()
-    
+
     select.where(select.name.is_not_null())
     print(f"   name is not null: {select.query_string}\n")
     select.discard()
-    
+
     print("5. Empty checks:")
     select.where(select.name.is_empty())
     print(f"   name is empty: {select.query_string}")
     select.discard()
-    
+
     select.where(select.name.is_not_empty())
     print(f"   name is not empty: {select.query_string}\n")
     select.discard()
-    
+
     print("6. Range queries:")
     select.where(select.price.is_between(start=50, end=500))
     print(f"   price between 50 and 500: {select.query_string}")
     select.discard()
-    
+
     select.where(select.price.is_not_between(start=50, end=500))
     print(f"   price not between 50 and 500: {select.query_string}\n")
     select.discard()
-    
+
     print("7. IN queries:")
     select.where(select.category.is_in(items=["electronics", "furniture"]))
     print(f"   category in [electronics, furniture]: {select.query_string}")
     select.discard()
-    
+
     select.where(select.category.is_not_in(items=["stationery"]))
     print(f"   category not in [stationery]: {select.query_string}\n")
     select.discard()
-    
+
     print("8. Pattern matching (regex):")
     select.where(select.name.match("^Lap", options="i"))
     print(f"   name matches '^Lap' (case-insensitive): {select.query_string}")
     select.discard()
-    
+
     select.where(select.name.not_match("^Mouse", options="i"))
     print(f"   name doesn't match '^Mouse': {select.query_string}\n")
     select.discard()
-    
+
     print("9. Logical AND (match):")
-    select.where(
-        select.match(
-            select.price > 50,
-            select.price < 500,
-            select.in_stock.is_true()
-        )
-    )
+    select.where(select.match(select.price > 50, select.price < 500, select.in_stock.is_true()))
     print(f"   price > 50 AND price < 500 AND in_stock: {select.query_string}\n")
     select.discard()
-    
+
     print("10. Logical OR (at_least):")
-    select.where(
-        select.at_least(
-            select.price < 50,
-            select.price > 1000
-        )
-    )
+    select.where(select.at_least(select.price < 50, select.price > 1000))
     print(f"   price < 50 OR price > 1000: {select.query_string}\n")
     select.discard()
-    
+
     print("11. Complex nested query:")
-    select.where(
-        select.at_least(
-            select.match(
-                select.category == "electronics",
-                select.price >= 100
-            ),
-            select.match(
-                select.category == "furniture",
-                select.in_stock.is_true()
-            )
-        )
-    )
+    select.where(select.at_least(select.match(select.category == "electronics", select.price >= 100), select.match(select.category == "furniture", select.in_stock.is_true())))
     print(f"   Complex OR with AND conditions: {select.query_string}\n")
     select.discard()
-    
+
     print("12. Sorting:")
     select.where(select.price > 0)
     select.sort(select.price.asc())
     print(f"   Sort by price ascending: {select.query_string}")
     select.discard()
-    
+
     select.where(select.price > 0)
     select.sort(select.price.desc())
     print(f"   Sort by price descending: {select.query_string}\n")
     select.discard()
-    
+
     print("13. Pagination:")
     select.where(select.in_stock.is_true())
     print(f"   Query: {select.query_string}")
@@ -190,18 +151,18 @@ if __name__ == "__main__":
     print("   for product in pagination:")
     print("       print(product.name)\n")
     select.discard()
-    
+
     print("14. Counting:")
     select.where(select.category == "electronics")
     print("   Count electronics: select.count()")
     print("   Total count: Product.count()\n")
     select.discard()
-    
+
     print("15. Fetching single item:")
     select.where(select.name == "Laptop")
     print("   Fetch one: product = select.fetch()")
     print("   Or directly: Product.load(product_id)\n")
     select.discard()
-    
+
     print("✅ All ORM-style API examples completed!")
     print("\nFor more information, see the README.md")

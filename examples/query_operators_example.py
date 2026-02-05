@@ -1,8 +1,9 @@
 """
-Example demonstrating ORM-style query system with Flexmodel/FlexmodelLite
+Example demonstrating ORM-style query system with Flexmodel
 """
 
-from flexschema import Schema, Flexmodel, FlexmodelLite, field
+from pymongo import MongoClient
+from flexschema import Schema, Flexmodel, field
 
 
 class Product(Flexmodel):
@@ -18,28 +19,13 @@ class Product(Flexmodel):
 if __name__ == "__main__":
     print("=== ORM-Style Query API Examples ===\n")
 
-    choice = input("Select storage [mongo/sqlite/demo]: ").strip().lower()
-    if choice.startswith("s"):
-
-        class ProductLite(FlexmodelLite):
-            schema: Schema = Product.schema
-
-        ProductLite.attach(":memory:", "products")
-        select = ProductLite.select()
-        print("✓ Using SQLite\n")
-    elif choice.startswith("m"):
-        try:
-            from pymongo import MongoClient
-
-            client = MongoClient("mongodb://localhost:27017/testdb", serverSelectionTimeoutMS=1000)
-            Product.attach(client, "products")
-            select = Product.select()
-            print("✓ Using MongoDB\n")
-        except Exception as e:
-            print("⚠️  MongoDB not available. Falling back to demo mode.\n")
-            select = Product.select()
-    else:
-        print("Demo mode: no database connection.\n")
+    try:
+        client = MongoClient("mongodb://localhost:27017/testdb", serverSelectionTimeoutMS=1000)
+        Product.attach(client, "products")
+        select = Product.select()
+        print("✓ Using MongoDB\n")
+    except Exception:
+        print("⚠️  MongoDB not available. Falling back to demo mode.\n")
         select = Product.select()
 
     print("1. Simple comparison:")

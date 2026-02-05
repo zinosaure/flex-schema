@@ -13,7 +13,6 @@ A flexible and powerful schema validation library for Python with MongoDB integr
 - **Auto-generated IDs**: Automatic UUID generation and timestamp tracking
 - **Callbacks**: Transform field values with custom callback functions
 - **Pagination**: Built-in pagination support for queries
-- **SQLite Lite Persistence**: Simple SQLite storage with `_id` primary key, `_updated_at` timestamp, and JSON document column
 
 ## Installation
 
@@ -23,8 +22,9 @@ Install from GitHub for the latest changes:
 pip install git+https://github.com/zinosaure/flex-schema.git@main
 ```
 
-**Optional dependencies:**
-- `pymongo` is required only for MongoDB usage. SQLite usage with `FlexmodelLite` does not require `pymongo`.
+**Required dependencies:**
+
+- `pymongo` is required only for MongoDB usage.
 
 ## Quick Start
 
@@ -119,6 +119,7 @@ print(meta.to_dict())
 ```
 
 **Available Methods:**
+
 - `is_schematic()`: Check if the model is valid
 - `evaluate()`: Get validation errors
 - `update(**data)`: Update model attributes
@@ -149,67 +150,19 @@ product.commit()
 ```
 
 **Instance Methods:**
+
 - `commit(commit_all=True)`: Save to database
 - `delete()`: Remove from database
 - `id`: Get the document ID
 - `updated_at`: Get last update timestamp
 
 **Class Methods:**
+
 - `attach(database, collection_name=None)`: Connect to MongoDB (accepts MongoClient or Database)
 - `detach()`: Disconnect from MongoDB
 - `load(_id)`: Load a document by ID
 - `count()`: Count documents in collection
 - `select()`: Create an ORM-style query builder
-
-### FlexmodelLite (SQLite)
-
-`FlexmodelLite` provides a lightweight SQLite-backed persistence layer. Records are stored in a single table with:
-
-- `_id` as `PRIMARY KEY`
-- `_updated_at` as `DATETIME` (ISO 8601 string)
-- `document` as JSON text
-
-```python
-from flexschema import Schema, FlexmodelLite, field, field_constraint
-
-class Note(FlexmodelLite):
-    schema: Schema = Schema.ident(
-        title=field(str, nullable=False),
-        body=field(str, default=""),
-        tags=field(list, default=[], constraint=field_constraint(item_type=str)),
-    )
-
-# Attach to SQLite (file path or :memory:)
-Note.attach(":memory:", "notes")
-
-note = Note(title="Hello", body="World", tags=["demo", "lite"])
-note.commit()
-
-loaded = Note.load(note.id)
-print(loaded.to_json(indent=2))
-
-select = Note.select()
-select.where(select.title == "Hello")
-results = select.fetch_all()
-print(len(results))
-```
-
-**Instance Methods:**
-- `commit(commit_all=True)`: Save to SQLite
-- `delete()`: Remove from SQLite
-- `id`: Get the document ID
-- `updated_at`: Get last update timestamp
-
-**Class Methods:**
-- `attach(database, collection_name=None)`: Connect to SQLite (path or `sqlite3.Connection`)
-- `detach()`: Disconnect from SQLite
-- `load(_id)`: Load a document by ID
-- `count()`: Count rows in table
-- `all()`: Load all rows
-- `select()`: ORM-style query builder (same API as `Flexmodel`)
-
-**Notes:**
-- `select().fetch_all()` returns a pagination object (with `results`, `count`, etc.), same as `Flexmodel`.
 
 ## ORM-Style Query API
 
@@ -320,6 +273,7 @@ select.discard()
 **Select API Methods:**
 
 **Query Building:**
+
 - `where(*conditions)`: Add conditions to the query
 - `match(*conditions)`: Logical AND of conditions
 - `at_least(*conditions)`: Logical OR of conditions
@@ -329,11 +283,13 @@ select.discard()
 - `discard()`: Clear all conditions and sorting
 
 **Fetching Results:**
+
 - `fetch()`: Get one document matching the query
 - `fetch_all(current=1, results_per_page=10)`: Get paginated results
 - `count()`: Count documents matching the query
 
 **Statement Methods (on field access, e.g., `select.price`):**
+
 - Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
 - Boolean: `is_true()`, `is_false()`
 - Null: `is_null()`, `is_not_null()`
@@ -344,6 +300,7 @@ select.discard()
 - Sorting: `asc()`, `desc()`
 
 **Utility:**
+
 - `query_string`: Get JSON representation of the query
 - `to_sql`: Get SQL-like representation of the query (for debugging)
 
@@ -389,7 +346,7 @@ class User(Flexmodel):
             constraint=field_constraint(pattern=r"[^@]+@[^@]+\.[^@]+"),
         ),
         date_of_birth=field(
-            str, 
+            str,
             constraint=field_constraint(pattern=r"\d{4}-\d{2}-\d{2}")
         ),
         login=field(
