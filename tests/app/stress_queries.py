@@ -1,5 +1,4 @@
 import time
-
 import pymysql
 
 from flexschema import Schema, Flexmodel, field, field_constraint
@@ -107,6 +106,27 @@ def log_step(label: str, start: float) -> None:
     print(f"{label}: {elapsed:.3f}s")
 
 
+def print_table(rows: list[dict[str, object]], columns: list[str]) -> None:
+    if not rows:
+        print("(no rows)")
+        return
+
+    widths = {col: len(col) for col in columns}
+    for row in rows:
+        for col in columns:
+            value = row.get(col, "")
+            widths[col] = max(widths[col], len(str(value)))
+
+    header = " | ".join(col.ljust(widths[col]) for col in columns)
+    separator = "-+-".join("-" * widths[col] for col in columns)
+    print(header)
+    print(separator)
+
+    for row in rows:
+        line = " | ".join(str(row.get(col, "")).ljust(widths[col]) for col in columns)
+        print(line)
+
+
 def run_queries() -> None:
     start = time.time()
     connection = build_connection()
@@ -114,7 +134,10 @@ def run_queries() -> None:
     log_step("attach", start)
 
     start = time.time()
-    active_count = User.select().where(User.select().is_active.is_true()).count()
+    user_select = User.select()
+    user_select.where(user_select.is_active.is_true())
+    active_count = user_select.count()
+    user_select.discard()
     log_step(f"active users count={active_count}", start)
 
     start = time.time()
@@ -123,6 +146,7 @@ def run_queries() -> None:
     user_select.where(user_select.country.is_not_empty())
     user_select.sort(user_select.age.desc())
     _ = user_select.fetch_all(current=2, results_per_page=25)
+    user_select.discard()
     log_step("users where/sort/paginate", start)
 
     start = time.time()
@@ -131,12 +155,14 @@ def run_queries() -> None:
     contact_select.where(contact_select.is_favorite.is_false())
     contact_select.sort(contact_select.since_year.desc())
     _ = contact_select.fetch_all(current=1, results_per_page=50)
+    contact_select.discard()
     log_step("contacts filter/paginate", start)
 
     start = time.time()
     profile_select = Profile.select()
     profile_select.where(profile_select.city.is_not_empty())
     _ = profile_select.fetch_all(current=3, results_per_page=30)
+    profile_select.discard()
     log_step("profiles pagination", start)
 
     start = time.time()
@@ -144,19 +170,51 @@ def run_queries() -> None:
     message_select.where(message_select.is_read.is_false())
     message_select.sort(message_select.sent_at.desc())
     _ = message_select.fetch_all(current=1, results_per_page=50)
+    message_select.discard()
     log_step("messages unread", start)
 
     start = time.time()
     group_select = Group.select()
     group_select.where(group_select.is_private.is_false())
     _ = group_select.fetch_all(current=1, results_per_page=20)
+    group_select.discard()
     log_step("groups public", start)
 
     start = time.time()
     member_select = GroupMember.select()
     member_select.where(member_select.role == "member")
     _ = member_select.fetch_all(current=2, results_per_page=40)
+    member_select.discard()
     log_step("group members", start)
+
+    select = User.select()
+    results_per_page = 15
+    while True:
+        raw = input("Page number (q to quit): ").strip()
+        if raw.lower() in {"q", "quit", "exit", ""}:
+            break
+
+        try:
+            current = int(raw)
+        except ValueError:
+            print("Please enter a valid page number.")
+            continue
+
+        select.discard()
+        select.sort(select.age.desc())
+        page = select.fetch_all(current=current, results_per_page=results_per_page)
+        print(f"Page {current} with {results_per_page} items -> {len(page)} total results")
+        rows = [
+            {
+                "id": item.id,
+                "name": item.name,
+                "email": item.email,
+                "age": item.age,
+                "country": item.country,
+            }
+            for item in page
+        ]
+        print_table(rows, ["id", "name", "email", "age", "country"])
 
     connection.close()
 
