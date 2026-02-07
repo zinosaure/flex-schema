@@ -2,7 +2,7 @@
 Comprehensive example demonstrating the ORM-style query API
 """
 
-from pymongo import MongoClient
+import pymysql
 from flexschema import Schema, Flexmodel, field
 
 
@@ -25,14 +25,20 @@ class Product(Flexmodel):
 if __name__ == "__main__":
     print("=== ORM-Style Query API Examples ===\n")
 
-    # Try to connect to MongoDB (will work without actual connection for demo)
+    # Try to connect to MySQL (will work without actual connection for demo)
     try:
-        client = MongoClient("mongodb://localhost:27017/testdb", serverSelectionTimeoutMS=1000)
-        Product.attach(client, "products")
+        connection = pymysql.connect(
+            host="localhost",
+            user="root",
+            password="password",
+            database="testdb",
+            connect_timeout=1,
+        )
+        Product.attach(connection, "products")
         select = Product.select()
-        print("✓ Connected to MongoDB\n")
+        print("✓ Connected to MySQL\n")
     except Exception as e:
-        print("⚠️  MongoDB not available. Showing API examples only.\n")
+        print("⚠️  MySQL not available. Showing API examples only.\n")
         select = Product.select()
 
     # Create a Select query builder

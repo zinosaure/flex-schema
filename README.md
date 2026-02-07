@@ -1,16 +1,16 @@
 # Flex-Schema
 
-A flexible and powerful schema validation library for Python with MongoDB integration and ORM-style query API. Flex-Schema provides a declarative way to define data models with built-in validation, type checking, and seamless database operations.
+A flexible and powerful schema validation library for Python with MySQL integration and ORM-style query API. Flex-Schema provides a declarative way to define data models with built-in validation, type checking, and seamless database operations.
 
 ## Features
 
 - **Declarative Schema Definition**: Define your data models with a clean, intuitive syntax
 - **Type Safety**: Built-in type checking for common Python types (str, int, float, bool, list, tuple)
 - **Field Validation**: Comprehensive validation with constraints (min/max length, patterns, nullable fields)
-- **MongoDB Integration**: Seamless integration with MongoDB for CRUD operations
+- **MySQL Integration**: Seamless integration with MySQL for CRUD operations
 - **ORM-Style Query API**: Intuitive, chainable query builder with type-safe field access
 - **Nested Models**: Support for complex nested data structures
-- **Auto-generated IDs**: Automatic UUID generation and timestamp tracking
+- **Auto-generated IDs**: Auto-increment primary keys with stable UUIDs and timestamp tracking
 - **Callbacks**: Transform field values with custom callback functions
 - **Pagination**: Built-in pagination support for queries
 
@@ -24,7 +24,7 @@ pip install git+https://github.com/zinosaure/flex-schema.git@main
 
 **Required dependencies:**
 
-- `pymongo` is required only for MongoDB usage.
+- `PyMySQL` is required only for MySQL usage.
 
 ## Quick Start
 
@@ -32,7 +32,7 @@ Here's a simple example to get you started:
 
 ```python
 from flexschema import Schema, Flexmodel, field, field_constraint
-from pymongo import MongoClient
+import pymysql
 
 class User(Flexmodel):
     schema: Schema = Schema.ident(
@@ -45,8 +45,14 @@ class User(Flexmodel):
         age=field(int, default=0),
     )
 
-# Connect to MongoDB
-User.attach(MongoClient("mongodb://localhost:27017/mydb"), "users")
+# Connect to MySQL
+connection = pymysql.connect(
+    host="localhost",
+    user="root",
+    password="password",
+    database="mydb",
+)
+User.attach(connection, "users")
 
 # Create and save a user
 user = User(name="John Doe", email="john@example.com", age=30)
@@ -62,7 +68,7 @@ if user.commit():
 A `Schema` defines the structure and validation rules for your data models. There are two ways to create a schema:
 
 - `Schema(**fields)`: Basic schema without auto-generated fields
-- `Schema.ident(**fields)`: Schema with auto-generated `_id` and `_updated_at` fields
+- `Schema.ident(**fields)`: Schema with auto-generated `_id`, `_uuid`, and `_updated_at` fields
 
 ### Field Types
 
@@ -128,11 +134,11 @@ print(meta.to_dict())
 
 ### Flexmodel
 
-The `Flexmodel` class extends `Flex` with MongoDB persistence capabilities and an ORM-style query API:
+The `Flexmodel` class extends `Flex` with MySQL persistence capabilities and an ORM-style query API:
 
 ```python
 from flexschema import Schema, Flexmodel, field
-from pymongo import MongoClient
+import pymysql
 
 class Product(Flexmodel):
     schema: Schema = Schema.ident(
@@ -142,7 +148,13 @@ class Product(Flexmodel):
     )
 
 # Attach to database
-Product.attach(MongoClient("mongodb://localhost:27017/shop"), "products")
+connection = pymysql.connect(
+    host="localhost",
+    user="root",
+    password="password",
+    database="shop",
+)
+Product.attach(connection, "products")
 
 # Create and save
 product = Product(name="Laptop", price=999.99)
@@ -153,13 +165,14 @@ product.commit()
 
 - `commit(commit_all=True)`: Save to database
 - `delete()`: Remove from database
-- `id`: Get the document ID
+- `id`: Get the auto-increment ID
+- `uuid`: Get the stable UUID for the row
 - `updated_at`: Get last update timestamp
 
 **Class Methods:**
 
-- `attach(database, collection_name=None)`: Connect to MongoDB (accepts MongoClient or Database)
-- `detach()`: Disconnect from MongoDB
+- `attach(database, collection_name=None)`: Connect to MySQL (accepts PyMySQL connection or connection params dict)
+- `detach()`: Disconnect from MySQL
 - `load(_id)`: Load a document by ID
 - `count()`: Count documents in collection
 - `select()`: Create an ORM-style query builder
@@ -170,7 +183,7 @@ Flexmodel provides a powerful ORM-style query API through the `select()` method,
 
 ```python
 from flexschema import Schema, Flexmodel, field
-from pymongo import MongoClient
+import pymysql
 
 class Product(Flexmodel):
     schema: Schema = Schema.ident(
@@ -181,7 +194,13 @@ class Product(Flexmodel):
     )
 
 # Connect to database
-Product.attach(MongoClient("mongodb://localhost:27017/shop"), "products")
+connection = pymysql.connect(
+    host="localhost",
+    user="root",
+    password="password",
+    database="shop",
+)
+Product.attach(connection, "products")
 
 # Create a query builder
 select = Product.select()
@@ -311,7 +330,7 @@ Here's a comprehensive example demonstrating nested models and validation:
 ```python
 import time
 from typing import Any
-from pymongo import MongoClient
+import pymysql
 from flexschema import Schema, Flex, Flexmodel, field, field_constraint
 
 
@@ -376,10 +395,15 @@ class User(Flexmodel):
 
 
 if __name__ == "__main__":
-    # Connect to MongoDB
-    client = MongoClient("mongodb://localhost:27017/testdb")
-    User.attach(client, "users")
-    Login.attach(client, "logins")
+    # Connect to MySQL
+    connection = pymysql.connect(
+        host="localhost",
+        user="root",
+        password="password",
+        database="testdb",
+    )
+    User.attach(connection, "users")
+    Login.attach(connection, "logins")
 
     # Create a user
     user = User(
@@ -654,7 +678,7 @@ user.commit()
 
 # Export with references
 user_dict = user.to_dict(commit=True)
-# login field will be: {"$id": "login-uuid"}
+# login field will be: 123  # auto-increment ID from MySQL
 ```
 
 ### Pattern Validation
@@ -700,7 +724,7 @@ except SchemaDefinitionException as e:
 ## Requirements
 
 - Python >= 3.9
-- pymongo
+- PyMySQL
 
 ## License
 

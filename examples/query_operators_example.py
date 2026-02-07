@@ -2,7 +2,7 @@
 Example demonstrating ORM-style query system with Flexmodel
 """
 
-from pymongo import MongoClient
+import pymysql
 from flexschema import Schema, Flexmodel, field
 
 
@@ -20,12 +20,18 @@ if __name__ == "__main__":
     print("=== ORM-Style Query API Examples ===\n")
 
     try:
-        client = MongoClient("mongodb://localhost:27017/testdb", serverSelectionTimeoutMS=1000)
-        Product.attach(client, "products")
+        connection = pymysql.connect(
+            host="localhost",
+            user="root",
+            password="password",
+            database="testdb",
+            connect_timeout=1,
+        )
+        Product.attach(connection, "products")
         select = Product.select()
-        print("✓ Using MongoDB\n")
+        print("✓ Using MySQL\n")
     except Exception:
-        print("⚠️  MongoDB not available. Falling back to demo mode.\n")
+        print("⚠️  MySQL not available. Falling back to demo mode.\n")
         select = Product.select()
 
     print("1. Simple comparison:")

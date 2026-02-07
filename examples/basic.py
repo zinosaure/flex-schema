@@ -1,7 +1,7 @@
 import time
 
 from typing import Any
-from pymongo import MongoClient
+import pymysql
 from flexschema import Schema, Flex, Flexmodel, field, field_constraint
 
 
@@ -65,8 +65,15 @@ class User(Flexmodel):
 
 if __name__ == "__main__":
     try:
-        User.attach(client := MongoClient("mongodb://localhost:27017/testdb", serverSelectionTimeoutMS=1000), "users")
-        Login.attach(client, "logins")
+        connection = pymysql.connect(
+            host="localhost",
+            user="root",
+            password="password",
+            database="testdb",
+            connect_timeout=1,
+        )
+        User.attach(connection, "users")
+        Login.attach(connection, "logins")
 
         user = User(
             name="john doe",
@@ -84,7 +91,7 @@ if __name__ == "__main__":
         else:
             print("Failed to save user:\n", user.evaluate())
     except Exception as e:
-        print(f"⚠️  MongoDB not available: {e}")
+        print(f"⚠️  MySQL not available: {e}")
         print("\nShowing user data without saving to database:")
         user = User(
             name="john doe",
@@ -97,4 +104,4 @@ if __name__ == "__main__":
             metadata=Metadata(created_by="admin", last_login=int(time.time())),
         )
         print(user.to_json(indent=4))
-        print("\nTo save to database, start MongoDB at localhost:27017")
+        print("\nTo save to database, start MySQL and update credentials.")

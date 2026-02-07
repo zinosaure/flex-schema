@@ -1,0 +1,162 @@
+[
+  {
+    "sender_email": "user0@example.com",
+    "receiver_email": "user1@example.com",
+    "subject": "Hello",
+    "body": "Hey there! Just checking in.",
+    "sent_at": "2024-01-02 10:00:00",
+    "is_read": true
+  },
+  {
+    "sender_email": "user1@example.com",
+    "receiver_email": "user2@example.com",
+    "subject": "Update",
+    "body": "Project is moving forward.",
+    "sent_at": "2024-01-03 12:30:00",
+    "is_read": false
+  },
+  {
+    "sender_email": "user2@example.com",
+    "receiver_email": "user3@example.com",
+    "subject": "Lunch",
+    "body": "Want to grab lunch tomorrow?",
+    "sent_at": "2024-01-04 09:15:00",
+    "is_read": true
+  },
+  {
+    "sender_email": "user3@example.com",
+    "receiver_email": "user4@example.com",
+    "subject": "Review",
+    "body": "Please review the PR when you can.",
+    "sent_at": "2024-01-05 16:45:00",
+    "is_read": false
+  },
+  {
+    "sender_email": "user4@example.com",
+    "receiver_email": "user5@example.com",
+    "subject": "Thanks",
+    "body": "Thanks for the help today.",
+    "sent_at": "2024-01-06 08:10:00",
+    "is_read": true
+  },
+  {
+    "sender_email": "user5@example.com",
+    "receiver_email": "user6@example.com",
+    "subject": "Meeting",
+    "body": "Can we reschedule the meeting?",
+    "sent_at": "2024-01-07 14:05:00",
+    "is_read": false
+  },
+  {
+    "sender_email": "user6@example.com",
+    "receiver_email": "user7@example.com",
+    "subject": "Question",
+    "body": "Do you have a minute for a question?",
+    "sent_at": "2024-01-08 11:20:00",
+    "is_read": true
+  },
+  {
+    "sender_email": "user7@example.com",
+    "receiver_email": "user8@example.com",
+    "subject": "Reminder",
+    "body": "Reminder about the deadline.",
+    "sent_at": "2024-01-09 17:55:00",
+    "is_read": false
+  },
+  {
+    "sender_email": "user8@example.com",
+    "receiver_email": "user9@example.com",
+    "subject": "Docs",
+    "body": "Docs are updated in the repo.",
+    "sent_at": "2024-01-10 13:40:00",
+    "is_read": true
+  },
+  {
+    "sender_email": "user9@example.com",
+    "receiver_email": "user10@example.com",
+    "subject": "Ping",
+    "body": "Ping me when you are free.",
+    "sent_at": "2024-01-11 09:25:00",
+    "is_read": false
+  },
+  {
+    "sender_email": "user10@example.com",
+    "receiver_email": "user11@example.com",
+    "subject": "Plan",
+    "body": "Let us align on the plan.",
+    "sent_at": "2024-01-12 15:10:00",
+    "is_read": true
+  },
+  {
+    "sender_email": "user11@example.com",
+    "receiver_email": "user12@example.com",
+    "subject": "Check",
+    "body": "Quick status check.",
+    "sent_at": "2024-01-13 10:05:00",
+    "is_read": false
+  },
+  {
+    "sender_email": "user12@example.com",
+    "receiver_email": "user13@example.com",
+    "subject": "Idea",
+    "body": "New idea to discuss.",
+    "sent_at": "2024-01-14 18:30:00",
+    "is_read": true
+  },
+  {
+    "sender_email": "user13@example.com",
+    "receiver_email": "user14@example.com",
+    "subject": "Follow-up",
+    "body": "Following up on our last chat.",
+    "sent_at": "2024-01-15 07:50:00",
+    "is_read": false
+  },
+  {
+    "sender_email": "user14@example.com",
+    "receiver_email": "user15@example.com",
+    "subject": "Sync",
+    "body": "Can we sync later today?",
+    "sent_at": "2024-01-16 12:15:00",
+    "is_read": true
+  },
+  {
+    "sender_email": "user15@example.com",
+    "receiver_email": "user16@example.com",
+    "subject": "Heads up",
+    "body": "Heads up on the change coming.",
+    "sent_at": "2024-01-17 13:35:00",
+    "is_read": false
+  },
+  {
+    "sender_email": "user16@example.com",
+    "receiver_email": "user17@example.com",
+    "subject": "Report",
+    "body": "Report is ready to review.",
+    "sent_at": "2024-01-18 10:45:00",
+    "is_read": true
+  },
+  {
+    "sender_email": "user17@example.com",
+    "receiver_email": "user18@example.com",
+    "subject": "Check-in",
+    "body": "Just a quick check-in.",
+    "sent_at": "2024-01-19 16:20:00",
+    "is_read": false
+  },
+  {
+    "sender_email": "user18@example.com",
+    "receiver_email": "user19@example.com",
+    "subject": "Hi",
+    "body": "Hi! Hope you are doing well.",
+    "sent_at": "2024-01-20 08:55:00",
+    "is_read": true
+  },
+  {
+    "sender_email": "user19@example.com",
+    "receiver_email": "user0@example.com",
+    "subject": "Wrap",
+    "body": "Wrapping up the week.",
+    "sent_at": "2024-01-21 19:05:00",
+    "is_read": false
+  }
+]

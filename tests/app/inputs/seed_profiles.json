@@ -1,0 +1,162 @@
+[
+  {
+    "user_email": "user0@example.com",
+    "phone": "+1-202-555-0100",
+    "bio": "Coffee, code, and clean APIs.",
+    "city": "Paris",
+    "country": "France",
+    "interests": ["music", "travel", "dev"]
+  },
+  {
+    "user_email": "user1@example.com",
+    "phone": "+1-202-555-0101",
+    "bio": "Backend tinkerer.",
+    "city": "Berlin",
+    "country": "Germany",
+    "interests": ["linux", "databases"]
+  },
+  {
+    "user_email": "user2@example.com",
+    "phone": "+1-202-555-0102",
+    "bio": "Always learning.",
+    "city": "Madrid",
+    "country": "Spain",
+    "interests": ["python", "reading"]
+  },
+  {
+    "user_email": "user3@example.com",
+    "phone": "+1-202-555-0103",
+    "bio": "Clean code advocate.",
+    "city": "Lisbon",
+    "country": "Portugal",
+    "interests": ["clean-code", "testing"]
+  },
+  {
+    "user_email": "user4@example.com",
+    "phone": "+1-202-555-0104",
+    "bio": "Full-stack builder.",
+    "city": "Rome",
+    "country": "Italy",
+    "interests": ["web", "design"]
+  },
+  {
+    "user_email": "user5@example.com",
+    "phone": "+1-202-555-0105",
+    "bio": "Data curious.",
+    "city": "Lyon",
+    "country": "France",
+    "interests": ["data", "sql"]
+  },
+  {
+    "user_email": "user6@example.com",
+    "phone": "+1-202-555-0106",
+    "bio": "Likes small tools.",
+    "city": "Dublin",
+    "country": "Ireland",
+    "interests": ["cli", "automation"]
+  },
+  {
+    "user_email": "user7@example.com",
+    "phone": "+1-202-555-0107",
+    "bio": "Ops and infra.",
+    "city": "Oslo",
+    "country": "Norway",
+    "interests": ["infra", "containers"]
+  },
+  {
+    "user_email": "user8@example.com",
+    "phone": "+1-202-555-0108",
+    "bio": "Testing all the things.",
+    "city": "Helsinki",
+    "country": "Finland",
+    "interests": ["qa", "automation"]
+  },
+  {
+    "user_email": "user9@example.com",
+    "phone": "+1-202-555-0109",
+    "bio": "APIs and schemas.",
+    "city": "Vienna",
+    "country": "Austria",
+    "interests": ["api", "schema"]
+  },
+  {
+    "user_email": "user10@example.com",
+    "phone": "+1-202-555-0110",
+    "bio": "Distributed systems.",
+    "city": "Prague",
+    "country": "Czechia",
+    "interests": ["systems", "scaling"]
+  },
+  {
+    "user_email": "user11@example.com",
+    "phone": "+1-202-555-0111",
+    "bio": "Builds small services.",
+    "city": "Warsaw",
+    "country": "Poland",
+    "interests": ["microservices", "docker"]
+  },
+  {
+    "user_email": "user12@example.com",
+    "phone": "+1-202-555-0112",
+    "bio": "Metrics and observability.",
+    "city": "Stockholm",
+    "country": "Sweden",
+    "interests": ["metrics", "logs"]
+  },
+  {
+    "user_email": "user13@example.com",
+    "phone": "+1-202-555-0113",
+    "bio": "Enjoys refactors.",
+    "city": "Brussels",
+    "country": "Belgium",
+    "interests": ["refactor", "architecture"]
+  },
+  {
+    "user_email": "user14@example.com",
+    "phone": "+1-202-555-0114",
+    "bio": "Feature flags fan.",
+    "city": "Amsterdam",
+    "country": "Netherlands",
+    "interests": ["feature-flags", "experiments"]
+  },
+  {
+    "user_email": "user15@example.com",
+    "phone": "+1-202-555-0115",
+    "bio": "Shipping fast.",
+    "city": "Copenhagen",
+    "country": "Denmark",
+    "interests": ["delivery", "devops"]
+  },
+  {
+    "user_email": "user16@example.com",
+    "phone": "+1-202-555-0116",
+    "bio": "Prefers typed code.",
+    "city": "Zurich",
+    "country": "Switzerland",
+    "interests": ["typing", "safety"]
+  },
+  {
+    "user_email": "user17@example.com",
+    "phone": "+1-202-555-0117",
+    "bio": "Async fan.",
+    "city": "Budapest",
+    "country": "Hungary",
+    "interests": ["async", "performance"]
+  },
+  {
+    "user_email": "user18@example.com",
+    "phone": "+1-202-555-0118",
+    "bio": "Takes notes.",
+    "city": "Athens",
+    "country": "Greece",
+    "interests": ["docs", "writing"]
+  },
+  {
+    "user_email": "user19@example.com",
+    "phone": "+1-202-555-0119",
+    "bio": "Likes schema design.",
+    "city": "Reykjavik",
+    "country": "Iceland",
+    "interests": ["models", "schemas"]
+  }
+]
