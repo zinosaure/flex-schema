@@ -182,12 +182,14 @@ class Flex:
     def update(self, **data: Any):
         for name, field in self.schema:
             value = data.get(name, self.__dict__.get(name, field.default))
+
             if issubclass(field.type, Flexmodel) and isinstance(value, dict) and (id := value.get("$id")):
                 value = field.type.load(id)
             elif issubclass(field.type, Flexmodel) and isinstance(value, (int, str)):
                 value = field.type.load(value)
             elif issubclass(field.type, Flex) and isinstance(value, dict):
                 value = field.type().update(**value)
+
             self.__dict__[name] = value
 
         return self
