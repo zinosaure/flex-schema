@@ -9,6 +9,7 @@ from typing import Callable, Type
 
 try:
     import pymysql
+
 except Exception:  # pragma: no cover - optional dependency
     pymysql = None
 
@@ -63,7 +64,6 @@ class Schema:
     def is_submittable(self, data: dict[str, Any]) -> bool:
         for name, field in self.fields.items():
             item = data.get(name, field.default)
-
             if hasattr(item, "schema") and isinstance(item.schema, Schema):
                 if not item.schema.is_submittable(item.__dict__):
                     return False
@@ -182,14 +182,12 @@ class Flex:
     def update(self, **data: Any):
         for name, field in self.schema:
             value = data.get(name, self.__dict__.get(name, field.default))
-
             if issubclass(field.type, Flexmodel) and isinstance(value, dict) and (id := value.get("$id")):
                 value = field.type.load(id)
             elif issubclass(field.type, Flexmodel) and isinstance(value, (int, str)):
                 value = field.type.load(value)
             elif issubclass(field.type, Flex) and isinstance(value, dict):
                 value = field.type().update(**value)
-
             self.__dict__[name] = value
 
         return self
@@ -200,7 +198,6 @@ class Flex:
         for name, field in self.schema.fields.items():
             if e := field.evaluate(value := self.__dict__.get(name, field.default)):
                 messages[name] = e
-
             if isinstance(value, (Flex, Flexmodel)):
                 if len(e := value.evaluate()) > 0:
                     messages[name] = e
@@ -221,7 +218,7 @@ class Flex:
                 value = {k: serialize(v) for k, v in value.__dict__.items()}
             elif isinstance(value, datetime):
                 value = value.isoformat()
-
+            
             if field and callable(field.callback):
                 value = field.callback(value)
 
@@ -279,18 +276,19 @@ class Flexmodel(Flex):
 
         self.update(_updated_at=self._now_str())
         _ = self.uuid
-
         row = self._serialize_for_db(commit_all)
+
         return self._save_row(row)
 
     def delete(self) -> bool:
         if self.id is None:
             return False
 
-        sql = f"DELETE FROM `{self.collection_name}` WHERE `_id` = %s"
         with self.connection().cursor() as cursor:
-            cursor.execute(sql, (self.id,))
+            cursor.execute(f"DELETE FROM `{self.collection_name}` WHERE `_id` = %s", (self.id,))
+
         self.connection().commit()
+
         return True
 
     @classmethod
@@ -300,6 +298,7 @@ class Flexmodel(Flex):
 
         if isinstance(database, dict):
             cls.database = pymysql.connect(**database)
+
         elif pymysql and hasattr(pymysql, "connections") and isinstance(database, pymysql.connections.Connection):
             cls.database = database
         else:
@@ -315,6 +314,7 @@ class Flexmodel(Flex):
                 cls.database.close()
             except Exception:
                 pass
+
         cls.database = None
         cls.collection_name = "collections"
 
@@ -330,21 +330,19 @@ class Flexmodel(Flex):
 
     @classmethod
     def load(cls, id: int | str) -> Optional["Flexmodel"]:
-        sql = f"SELECT * FROM `{cls.collection_name}` WHERE `_id` = %s LIMIT 1"
         with cls.connection().cursor(pymysql.cursors.DictCursor) as cursor:
-            cursor.execute(sql, (id,))
-            row = cursor.fetchone()
-
-        if row:
-            return cls._from_row(row)
+            cursor.execute(f"SELECT * FROM `{cls.collection_name}` WHERE `_id` = %s LIMIT 1", (id,))
+            if row := cursor.fetchone():
+                return cls._from_row(row)
 
     @classmethod
     def count(cls) -> int:
-        sql = f"SELECT COUNT(*) AS total FROM `{cls.collection_name}`"
         with cls.connection().cursor(pymysql.cursors.DictCursor) as cursor:
-            cursor.execute(sql)
-            row = cursor.fetchone()
-        return int(row.get("total", 0)) if row else 0
+            cursor.execute(f"SELECT COUNT(*) AS total FROM `{cls.collection_name}`")
+            if row := cursor.fetchone():
+                return int(row.get("total", 0))
+
+        return 0
 
     @classmethod
     def select(cls) -> "Flexmodel.Select":
@@ -354,23 +352,31 @@ class Flexmodel(Flex):
     def _column_type(cls, name: str, field: Schema.Field) -> str:
         if name == "_id":
             return "BIGINT AUTO_INCREMENT PRIMARY KEY"
+
         if name == "_uuid":
             return "CHAR(36) NOT NULL UNIQUE"
+
         if name == "_updated_at":
             return "DATETIME"
 
         if hasattr(field.type, "__mro__") and any(base.__name__ == "Flexmodel" for base in field.type.__mro__):
             return "BIGINT"
+
         if field.type in (list, tuple) or (hasattr(field.type, "__mro__") and any(base.__name__ == "Flex" for base in field.type.__mro__)):
             return "JSON"
+
         if field.type is str:
             return "TEXT"
+
         if field.type is int:
             return "BIGINT"
+
         if field.type is float:
             return "DOUBLE"
+
         if field.type is bool:
             return "TINYINT(1)"
+
         return "TEXT"
 
     @classmethod
@@ -379,35 +385,47 @@ class Flexmodel(Flex):
 
         for name, field in cls.schema:
             column = f"`{name}` {cls._column_type(name, field)}"
+
             if name not in ("_id", "_uuid") and field.nullable is False:
                 column += " NOT NULL"
+
             columns.append(column)
 
-        sql = f"CREATE TABLE IF NOT EXISTS `{cls.collection_name}` ({', '.join(columns)})"
         with cls.connection().cursor() as cursor:
-            cursor.execute(sql)
+            # Schema is applied lazily when attaching a model.
+            cursor.execute(f"CREATE TABLE IF NOT EXISTS `{cls.collection_name}` ({', '.join(columns)})")
+
         cls.connection().commit()
 
     @classmethod
     def _serialize_value(cls, value: Any) -> Any:
+        # Normalize Python values into MySQL-friendly payloads.
         if isinstance(value, Flexmodel):
             return value.id
+
         if isinstance(value, Flex):
             return json.dumps(value.to_dict(), ensure_ascii=False)
+
         if isinstance(value, list):
             return json.dumps([cls._serialize_value(item) for item in value], ensure_ascii=False)
+
         if isinstance(value, tuple):
             return json.dumps([cls._serialize_value(item) for item in value], ensure_ascii=False)
+
         if isinstance(value, dict):
             return json.dumps({key: cls._serialize_value(item) for key, item in value.items()}, ensure_ascii=False)
+
         if isinstance(value, bool):
             return int(value)
+
         if isinstance(value, datetime):
             return value.strftime("%Y-%m-%d %H:%M:%S")
+
         return value
 
     @classmethod
     def _deserialize_value(cls, value: Any, field: Schema.Field) -> Any:
+        # Restore Python types from database values.
         if value is None:
             return None
 
@@ -428,6 +446,7 @@ class Flexmodel(Flex):
                     parsed = []
             else:
                 parsed = value
+
             return tuple(parsed) if field.type is tuple else parsed
 
         if hasattr(field.type, "__mro__") and any(base.__name__ == "Flexmodel" for base in field.type.__mro__):
@@ -441,60 +460,86 @@ class Flexmodel(Flex):
                     parsed = {}
             else:
                 parsed = value
+
             return field.type().update(**parsed)
 
         return value
 
     def _serialize_for_db(self, commit_all: bool) -> dict[str, Any]:
-        data = self.to_dict(commit=commit_all)
-        return {name: self._serialize_value(value) for name, value in data.items()}
+        return {name: self._serialize_value(value) for name, value in self.to_dict(commit=commit_all).items()}
 
     def _save_row(self, row: dict[str, Any]) -> bool:
+
         if self.id is None:
             columns = [name for name in row.keys() if name != "_id"]
             values = [row[name] for name in columns]
             placeholders = ", ".join(["%s"] * len(columns))
-            sql = f"INSERT INTO `{self.collection_name}` ({', '.join(['`' + name + '`' for name in columns])}) VALUES ({placeholders})"
+
             with self.connection().cursor() as cursor:
-                cursor.execute(sql, values)
+                cursor.execute(f"INSERT INTO `{self.collection_name}` ({', '.join(['`' + name + '`' for name in columns])}) VALUES ({placeholders})", values)
                 self.__dict__["_id"] = cursor.lastrowid
+
             self.connection().commit()
+
             return True
 
         columns = [name for name in row.keys() if name != "_id"]
         values = [row[name] for name in columns]
         assignments = ", ".join([f"`{name}` = %s" for name in columns])
-        sql = f"UPDATE `{self.collection_name}` SET {assignments} WHERE `_id` = %s"
+
         with self.connection().cursor() as cursor:
-            cursor.execute(sql, values + [self.id])
+            cursor.execute(f"UPDATE `{self.collection_name}` SET {assignments} WHERE `_id` = %s", values + [self.id])
+
         self.connection().commit()
+
         return True
 
     @classmethod
     def _from_row(cls, row: dict[str, Any]) -> "Flexmodel":
         data: dict[str, Any] = {}
+
         for name, field in cls.schema:
             if name in row:
                 data[name] = cls._deserialize_value(row[name], field)
+
         return cls(**data)
 
     class Select:
+        class Condition:
+            def __init__(self, sql: str, params: Optional[list[Any]] = None):
+                self.sql = sql
+                self.params = params or []
+
+            def and_(self, other: "Flexmodel.Select.Condition") -> "Flexmodel.Select.Condition":
+                return Flexmodel.Select.Condition(f"({self.sql} AND {other.sql})", self.params + other.params)
+
+            def or_(self, other: "Flexmodel.Select.Condition") -> "Flexmodel.Select.Condition":
+                return Flexmodel.Select.Condition(f"({self.sql} OR {other.sql})", self.params + other.params)
+
+            def not_(self) -> "Flexmodel.Select.Condition":
+                return Flexmodel.Select.Condition(f"NOT ({self.sql})", list(self.params))
+
+        class Sort:
+            def __init__(self, name: str, direction: str):
+                self.name = name
+                self.direction = direction
+
         def __init__(self, model: "Flexmodel"):
             self.model: "Flexmodel" = model
-            self.sorts: dict[str, Any] = {}
-            self.statements: dict[str, Any] = {}
+            self.conditions: list[Flexmodel.Select.Condition] = []
+            self.sorts: list[Flexmodel.Select.Sort] = []
 
         def __getattr__(self, name: str) -> "Flexmodel.Select.Statement":
             if name not in self.model.schema.fields:
                 raise FlexmodelException(f"Select statement: field '{name}' does not exist in the model schema.")
 
-            return Flexmodel.Select.Statement(name, self.model.__dict__.get(name, self.model.schema[name].default))
+            return Flexmodel.Select.Statement(name, self.model)
 
         def __getitem__(self, name: str) -> "Flexmodel.Select.Statement":
             if name not in self.model.schema.fields:
                 raise FlexmodelException(f"Select statement: field '{name}' does not exist in the model schema.")
 
-            return Flexmodel.Select.Statement(name, self.model.__dict__.get(name, self.model.schema[name].default))
+            return Flexmodel.Select.Statement(name, self.model)
 
         def __len__(self) -> int:
             return self.count()
@@ -505,141 +550,71 @@ class Flexmodel(Flex):
 
         @property
         def query_string(self) -> str:
-            return json.dumps({"$where": self.statements, "$sort": self.sorts}, indent=4, ensure_ascii=False)
+            # Keep a JSON view of the SQL and params for debugging.
+            sql, params = self._compose_sql()
+
+            return json.dumps({"sql": sql, "params": params}, indent=4, ensure_ascii=False)
 
         @property
         def to_sql(self) -> str:
-            sql: str = "SELECT * FROM `" + self.model.collection_name + "`"
+            return self._compose_sql()[0]
 
-            if len(self.statements) == 0:
-                return sql
+        def match(self, *conditions: "Flexmodel.Select.Condition") -> "Flexmodel.Select.Condition":
+            return self._combine_conditions("AND", *conditions)
 
-            def sql_literal(value: Any) -> str:
-                if value is None:
-                    return "NULL"
-                if isinstance(value, bool):
-                    return "1" if value else "0"
-                if isinstance(value, (int, float)):
-                    return str(value)
-                return json.dumps(value)
+        def not_match(self, *conditions: "Flexmodel.Select.Condition") -> "Flexmodel.Select.Condition":
+            if cond := self._combine_conditions("AND", *conditions):
+                return cond.not_()
 
-            def field_expr(name: str) -> str:
-                if "." not in name:
-                    return f"`{name}`"
-                root, rest = name.split(".", 1)
-                path = "$." + rest
-                return f"JSON_EXTRACT(`{root}`, '{path}')"
+            return Flexmodel.Select.Condition("1=1")
 
-            def parse_condition(condition: dict[str, Any]) -> str:
-                clauses: list[str] = []
+        def at_least(self, *conditions: "Flexmodel.Select.Condition") -> "Flexmodel.Select.Condition":
+            return self._combine_conditions("OR", *conditions)
 
-                for key, value in condition.items():
-                    if key == "$and":
-                        parts = [parse_condition(item) for item in value]
-                        parts = [part for part in parts if part]
-                        if parts:
-                            clauses.append("(" + " AND ".join(parts) + ")")
-                    elif key == "$or":
-                        parts = [parse_condition(item) for item in value]
-                        parts = [part for part in parts if part]
-                        if parts:
-                            clauses.append("(" + " OR ".join(parts) + ")")
-                    elif key == "$not":
-                        inner = parse_condition(value)
-                        if inner:
-                            clauses.append("NOT (" + inner + ")")
-                    else:
-                        expr = field_expr(key)
-                        if isinstance(value, dict):
-                            for op, val in value.items():
-                                if op == "$eq":
-                                    clauses.append(f"{expr} = {sql_literal(val)}")
-                                if op == "$ne":
-                                    clauses.append(f"{expr} != {sql_literal(val)}")
-                                elif op == "$lt":
-                                    clauses.append(f"{expr} < {sql_literal(val)}")
-                                elif op == "$gt":
-                                    clauses.append(f"{expr} > {sql_literal(val)}")
-                                elif op == "$lte":
-                                    clauses.append(f"{expr} <= {sql_literal(val)}")
-                                elif op == "$gte":
-                                    clauses.append(f"{expr} >= {sql_literal(val)}")
-                                elif op == "$in":
-                                    clauses.append(f"{expr} IN ({', '.join([sql_literal(v) for v in val])})")
-                                elif op == "$nin":
-                                    clauses.append(f"{expr} NOT IN ({', '.join([sql_literal(v) for v in val])})")
-                                elif op == "$regex":
-                                    clauses.append(f"{expr} REGEXP {sql_literal(val)}")
-                                elif op == "$exists":
-                                    clauses.append(f"{expr} IS {'NOT ' if val else ''}NULL")
-                                elif op == "$all":
-                                    parts = [f"JSON_CONTAINS({expr}, {sql_literal(json.dumps(v))})" for v in val]
-                                    clauses.append(" AND ".join(parts))
-                                elif op == "$not":
-                                    clauses.append(f"NOT ({parse_condition({key: val})})")
-                        else:
-                            clauses.append(f"{expr} = {sql_literal(value)}")
+        def not_at_least(self, *conditions: "Flexmodel.Select.Condition") -> "Flexmodel.Select.Condition":
+            if cond := self._combine_conditions("OR", *conditions):
+                return cond.not_()
 
-                return " AND ".join([clause for clause in clauses if clause])
+            return Flexmodel.Select.Condition("1=1")
 
-            return sql + " WHERE " + parse_condition(self.statements)
-
-        def match(self, *conditions: dict[str, Any]) -> dict[str, Any]:
-            if len(conditions) == 0:
-                return {}
-
-            return {"$and": list(conditions)}
-
-        def not_match(self, *conditions: dict[str, Any]) -> dict[str, Any]:
-            if len(conditions) == 0:
-                return {}
-
-            return {"$not": {"$and": list(conditions)}}
-
-        def at_least(self, *conditions: dict[str, Any]) -> dict[str, Any]:
-            if len(conditions) == 0:
-                return {}
-
-            return {"$or": list(conditions)}
-
-        def not_at_least(self, *conditions: dict[str, Any]) -> dict[str, Any]:
-            if len(conditions) == 0:
-                return {}
-
-            return {"$not": {"$or": list(conditions)}}
-
-        def where(self, *conditions: dict[str, Any]):
+        def where(self, *conditions: "Flexmodel.Select.Condition") -> None:
             for condition in conditions:
-                for logical, value in condition.items():
-                    self.statements[logical] = value
+                if condition is None:
+                    continue
 
-        def sort(self, *conditions: dict[str, Any]):
+                self.conditions.append(condition)
+
+        def sort(self, *conditions: "Flexmodel.Select.Sort") -> None:
             if len(conditions) == 0:
                 return
 
             for condition in conditions:
-                for logical, value in condition.items():
-                    self.sorts[logical] = value
+                if condition is None:
+                    continue
 
-        def discard(self):
-            self.sorts = {}
-            self.statements = {}
+                self.sorts.append(condition)
+
+        def discard(self) -> None:
+            self.sorts = []
+            self.conditions = []
 
         def count(self) -> int:
-            sql, params = self._build_query(count_only=True)
+            sql, params = self._compose_sql(count_only=True)
+
             with self.model.connection().cursor(pymysql.cursors.DictCursor) as cursor:
                 cursor.execute(sql, params)
-                row = cursor.fetchone()
-            return int(row.get("total", 0)) if row else 0
+                if row := cursor.fetchone():
+                    return int(row.get("total", 0))
+            return 0
 
         def fetch(self) -> Optional["Flexmodel"]:
-            sql, params = self._build_query(limit=1)
+            sql, params = self._compose_sql(limit=1)
+
             with self.model.connection().cursor(pymysql.cursors.DictCursor) as cursor:
                 cursor.execute(sql, params)
-                row = cursor.fetchone()
 
-            if row:
-                return self.model.__class__._from_row(row)
+                if row := cursor.fetchone():
+                    return self.model.__class__._from_row(row)
 
         def fetch_all(self, current: int = 1, results_per_page: int = 10) -> "Flexmodel.Select.Pagination":
             count: int = 0
@@ -652,12 +627,15 @@ class Flexmodel(Flex):
                 results_per_page = 10
 
             count = self.count()
+
             if count > 0:
-                sql, params = self._build_query(limit=results_per_page, offset=(current - 1) * results_per_page)
+                sql, params = self._compose_sql(limit=results_per_page, offset=(current - 1) * results_per_page)
+
                 with self.model.connection().cursor(pymysql.cursors.DictCursor) as cursor:
                     cursor.execute(sql, params)
-                    rows = cursor.fetchall()
-                results = [self.model.__class__._from_row(row) for row in rows]
+
+                    if rows := cursor.fetchall():
+                        results = [self.model.__class__._from_row(row) for row in rows]
 
             return Flexmodel.Select.Pagination(count, results, current=current, results_per_page=results_per_page)
 
@@ -689,211 +667,159 @@ class Flexmodel(Flex):
                 }
 
         class Statement:
-            def __init__(self, name: str, model: Any):
+            def __init__(self, name: str, model: "Flexmodel"):
                 self.name: str = name
                 self.model: Any = model
 
+            # Statements map to SQL-friendly operators only.
             def __getattr__(self, name: str) -> "Flexmodel.Select.Statement":
                 if not isinstance(self.model, Flex) or name not in self.model.schema.fields:
                     raise FlexmodelException(f"Select statement: field '{self.name}' is not a Flex object, cannot access sub-field '{name}'.")
 
-                return Flexmodel.Select.Statement(f"{self.name}.{name}", self.model.__dict__.get(name, self.model.schema[name].default))
+                return Flexmodel.Select.Statement(f"{self.name}.{name}", self.model)
 
             def __getitem__(self, name: str) -> "Flexmodel.Select.Statement":
                 if not isinstance(self.model, Flex) or name not in self.model.schema.fields:
                     raise FlexmodelException(f"Select statement: field '{self.name}' is not a Flex object, cannot access sub-field '{name}'.")
 
-                return Flexmodel.Select.Statement(f"{self.name}.{name}", self.model.__dict__.get(name, self.model.schema[name].default))
+                return Flexmodel.Select.Statement(f"{self.name}.{name}", self.model)
 
-            def __eq__(self, value: Any) -> dict[str, Any]:  # type: ignore
-                return {self.name: value}
+            def __eq__(self, value: Any) -> "Flexmodel.Select.Condition":  # type: ignore
+                expr = self._expr()
 
-            def __ne__(self, value: Any) -> dict[str, Any]:  # type: ignore
-                return {self.name: {"$ne": value}}
+                if value is None:
+                    return Flexmodel.Select.Condition(f"{expr} IS NULL")
 
-            def __lt__(self, value: Any) -> dict[str, Any]:  # type: ignore
-                return {self.name: {"$lt": value}}
+                return Flexmodel.Select.Condition(f"{expr} = %s", [value])
 
-            def __gt__(self, value: Any) -> dict[str, Any]:  # type: ignore
-                return {self.name: {"$gt": value}}
+            def __ne__(self, value: Any) -> "Flexmodel.Select.Condition":  # type: ignore
+                expr = self._expr()
 
-            def __le__(self, value: Any) -> dict[str, Any]:  # type: ignore
-                return {self.name: {"$lte": value}}
+                if value is None:
+                    return Flexmodel.Select.Condition(f"{expr} IS NOT NULL")
 
-            def __ge__(self, value: Any) -> dict[str, Any]:  # type: ignore
-                return {self.name: {"$gte": value}}
+                return Flexmodel.Select.Condition(f"{expr} != %s", [value])
 
-            def __contains__(self, item: Any) -> dict[str, Any]:  # type: ignore
-                return {self.name: {"$in": item}}
+            def __lt__(self, value: Any) -> "Flexmodel.Select.Condition":  # type: ignore
+                return Flexmodel.Select.Condition(f"{self._expr()} < %s", [value])
 
-            def exists(self) -> dict[str, Any]:
-                return {self.name: {"$exists": True}}
+            def __gt__(self, value: Any) -> "Flexmodel.Select.Condition":  # type: ignore
+                return Flexmodel.Select.Condition(f"{self._expr()} > %s", [value])
 
-            def not_exists(self) -> dict[str, Any]:
-                return {self.name: {"$exists": False}}
+            def __le__(self, value: Any) -> "Flexmodel.Select.Condition":  # type: ignore
+                return Flexmodel.Select.Condition(f"{self._expr()} <= %s", [value])
 
-            def is_true(self) -> dict[str, Any]:
-                return {self.name: {"$eq": True}}
+            def __ge__(self, value: Any) -> "Flexmodel.Select.Condition":  # type: ignore
+                return Flexmodel.Select.Condition(f"{self._expr()} >= %s", [value])
 
-            def is_false(self) -> dict[str, Any]:
-                return {self.name: {"$eq": False}}
+            def __contains__(self, item: Any) -> "Flexmodel.Select.Condition":  # type: ignore
+                return self._in_clause(list(item), negate=False)
 
-            def is_null(self) -> dict[str, Any]:
-                return {self.name: {"$eq": None}}
+            def is_true(self) -> "Flexmodel.Select.Condition":
+                return Flexmodel.Select.Condition(f"{self._expr()} = %s", [True])
 
-            def is_not_null(self) -> dict[str, Any]:
-                return {self.name: {"$ne": None}}
+            def is_false(self) -> "Flexmodel.Select.Condition":
+                return Flexmodel.Select.Condition(f"{self._expr()} = %s", [False])
 
-            def is_empty(self) -> dict[str, Any]:
-                return {self.name: {"$in": [None, ""]}}
+            def is_null(self) -> "Flexmodel.Select.Condition":
+                return Flexmodel.Select.Condition(f"{self._expr()} IS NULL")
 
-            def is_not_empty(self) -> dict[str, Any]:
-                return {self.name: {"$nin": [None, ""]}}
+            def is_not_null(self) -> "Flexmodel.Select.Condition":
+                return Flexmodel.Select.Condition(f"{self._expr()} IS NOT NULL")
 
-            def is_between(self, *, start: int | str, end: int | str) -> dict[str, Any]:
-                return {self.name: {"$gte": start, "$lte": end}}
+            def is_empty(self) -> "Flexmodel.Select.Condition":
+                expr = self._expr()
+                return Flexmodel.Select.Condition(f"({expr} IS NULL OR {expr} = %s)", [""])
 
-            def is_not_between(self, *, start: int | str, end: int | str) -> dict[str, Any]:
-                return {self.name: {"$lt": start, "$gt": end}}
+            def is_not_empty(self) -> "Flexmodel.Select.Condition":
+                expr = self._expr()
+                return Flexmodel.Select.Condition(f"({expr} IS NOT NULL AND {expr} != %s)", [""])
 
-            def is_in(self, *, items: list[Any]) -> dict[str, Any]:
-                return {self.name: {"$in": items}}
+            def is_between(self, *, start: int | str, end: int | str) -> "Flexmodel.Select.Condition":
+                return Flexmodel.Select.Condition(f"{self._expr()} BETWEEN %s AND %s", [start, end])
 
-            def is_not_in(self, *, items: list[Any]) -> dict[str, Any]:
-                return {self.name: {"$nin": items}}
+            def is_not_between(self, *, start: int | str, end: int | str) -> "Flexmodel.Select.Condition":
+                return Flexmodel.Select.Condition(f"{self._expr()} NOT BETWEEN %s AND %s", [start, end])
 
-            def match(self, pattern: str, *, options: str = "i") -> dict[str, Any]:
-                return {self.name: {"$regex": pattern, "$options": options}}
+            def is_in(self, *, items: list[Any]) -> "Flexmodel.Select.Condition":
+                return self._in_clause(items, negate=False)
 
-            def not_match(self, pattern: str, *, options: str = "i") -> dict[str, Any]:
-                return {self.name: {"$not": {"$regex": pattern, "$options": options}}}
+            def is_not_in(self, *, items: list[Any]) -> "Flexmodel.Select.Condition":
+                return self._in_clause(items, negate=True)
 
-            def subset(self, items: list[Any]) -> dict[str, Any]:
-                return {self.name: {"$all": items}}
+            def match(self, pattern: str) -> "Flexmodel.Select.Condition":
+                return Flexmodel.Select.Condition(f"{self._expr()} REGEXP %s", [pattern])
 
-            def not_subset(self, items: list[Any]) -> dict[str, Any]:
-                return {self.name: {"$not": {"$all": items}}}
-
-            def function(self, js_code: str) -> dict[str, Any]:
-                return {self.name: {"$where": js_code}}
+            def not_match(self, pattern: str) -> "Flexmodel.Select.Condition":
+                return Flexmodel.Select.Condition(f"NOT ({self._expr()} REGEXP %s)", [pattern])
 
             # sorting helpers
-            def asc(self) -> dict[str, Any]:
-                return {self.name: 1}
+            def asc(self) -> "Flexmodel.Select.Sort":
+                return Flexmodel.Select.Sort(self.name, "ASC")
 
-            def desc(self) -> dict[str, Any]:
-                return {self.name: -1}
+            def desc(self) -> "Flexmodel.Select.Sort":
+                return Flexmodel.Select.Sort(self.name, "DESC")
 
-        def _build_query(self, *, count_only: bool = False, limit: Optional[int] = None, offset: Optional[int] = None) -> tuple[str, list[Any]]:
+            def _expr(self) -> str:
+                return Flexmodel.Select._field_expr(self.name)
+
+            def _in_clause(self, items: list[Any], *, negate: bool) -> "Flexmodel.Select.Condition":
+                expr = self._expr()
+
+                if not items:
+                    return Flexmodel.Select.Condition("TRUE" if negate else "FALSE")
+
+                placeholders = ", ".join(["%s"] * len(items))
+                operator = "NOT IN" if negate else "IN"
+
+                return Flexmodel.Select.Condition(f"{expr} {operator} ({placeholders})", list(items))
+
+        def _combine_conditions(self, operator: str, *conditions: "Flexmodel.Select.Condition") -> "Flexmodel.Select.Condition":
+            values = [condition for condition in conditions if condition is not None]
+            
+            if not values:
+                return Flexmodel.Select.Condition("1=1")
+
+            sql = f" {operator} ".join([f"({condition.sql})" for condition in values])
+            params: list[Any] = []
+
+            for condition in values:
+                params.extend(condition.params)
+
+            return Flexmodel.Select.Condition(sql, params)
+
+        @staticmethod
+        def _field_expr(name: str) -> str:
+            if "." not in name:
+                return f"`{name}`"
+
+            root, rest = name.split(".", 1)
+            path = "$." + rest
+
+            return f"JSON_EXTRACT(`{root}`, '{path}')"
+
+        def _compose_sql(self, *, count_only: bool = False, limit: Optional[int] = None, offset: Optional[int] = None) -> tuple[str, list[Any]]:
             select_clause = "SELECT COUNT(*) AS total" if count_only else "SELECT *"
             sql = f"{select_clause} FROM `{self.model.collection_name}`"
             params: list[Any] = []
 
-            def field_expr(name: str) -> str:
-                if "." not in name:
-                    return f"`{name}`"
-                root, rest = name.split(".", 1)
-                path = "$." + rest
-                return f"JSON_EXTRACT(`{root}`, '{path}')"
+            if self.conditions:
+                where_sql = " AND ".join([f"({condition.sql})" for condition in self.conditions])
+                params = [param for condition in self.conditions for param in condition.params]
 
-            def parse_condition(condition: dict[str, Any]) -> str:
-                clauses: list[str] = []
-
-                for key, value in condition.items():
-                    if key == "$and":
-                        parts = [parse_condition(item) for item in value]
-                        parts = [part for part in parts if part]
-                        if parts:
-                            clauses.append("(" + " AND ".join(parts) + ")")
-                    elif key == "$or":
-                        parts = [parse_condition(item) for item in value]
-                        parts = [part for part in parts if part]
-                        if parts:
-                            clauses.append("(" + " OR ".join(parts) + ")")
-                    elif key == "$not":
-                        inner = parse_condition(value)
-                        if inner:
-                            clauses.append("NOT (" + inner + ")")
-                    else:
-                        expr = field_expr(key)
-                        if isinstance(value, dict):
-                            for op, val in value.items():
-                                if op == "$eq":
-                                    if val is None:
-                                        clauses.append(f"{expr} IS NULL")
-                                    else:
-                                        clauses.append(f"{expr} = %s")
-                                        params.append(val)
-                                elif op == "$ne":
-                                    if val is None:
-                                        clauses.append(f"{expr} IS NOT NULL")
-                                    else:
-                                        clauses.append(f"{expr} != %s")
-                                        params.append(val)
-                                elif op == "$lt":
-                                    clauses.append(f"{expr} < %s")
-                                    params.append(val)
-                                elif op == "$gt":
-                                    clauses.append(f"{expr} > %s")
-                                    params.append(val)
-                                elif op == "$lte":
-                                    clauses.append(f"{expr} <= %s")
-                                    params.append(val)
-                                elif op == "$gte":
-                                    clauses.append(f"{expr} >= %s")
-                                    params.append(val)
-                                elif op == "$in":
-                                    if not val:
-                                        clauses.append("FALSE")
-                                    else:
-                                        placeholders = ", ".join(["%s"] * len(val))
-                                        clauses.append(f"{expr} IN ({placeholders})")
-                                        params.extend(val)
-                                elif op == "$nin":
-                                    if not val:
-                                        clauses.append("TRUE")
-                                    else:
-                                        placeholders = ", ".join(["%s"] * len(val))
-                                        clauses.append(f"{expr} NOT IN ({placeholders})")
-                                        params.extend(val)
-                                elif op == "$regex":
-                                    clauses.append(f"{expr} REGEXP %s")
-                                    params.append(val)
-                                elif op == "$exists":
-                                    clauses.append(f"{expr} IS {'NOT ' if val else ''}NULL")
-                                elif op == "$all":
-                                    for item in val:
-                                        clauses.append(f"JSON_CONTAINS({expr}, %s)")
-                                        params.append(json.dumps(item))
-                                elif op == "$not":
-                                    clauses.append(f"NOT ({parse_condition({key: val})})")
-                                elif op == "$where":
-                                    raise FlexmodelException("MySQL does not support $where JavaScript functions.")
-                        else:
-                            if value is None:
-                                clauses.append(f"{expr} IS NULL")
-                            else:
-                                clauses.append(f"{expr} = %s")
-                                params.append(value)
-
-                return " AND ".join([clause for clause in clauses if clause])
-
-            if self.statements:
-                where_sql = parse_condition(self.statements)
                 if where_sql:
                     sql += " WHERE " + where_sql
 
             if not count_only and self.sorts:
-                order_clauses: list[str] = []
-                for name, direction in self.sorts.items():
-                    direction_sql = "ASC" if direction == 1 else "DESC"
-                    order_clauses.append(f"{field_expr(name)} {direction_sql}")
-                if order_clauses:
-                    sql += " ORDER BY " + ", ".join(order_clauses)
+                order_by = ", ".join([f"{self._field_expr(sort.name)} {sort.direction}" for sort in self.sorts])
+
+                if order_by:
+                    sql += " ORDER BY " + order_by
 
             if not count_only and limit is not None:
                 sql += " LIMIT %s"
                 params.append(limit)
+
                 if offset is not None:
                     sql += " OFFSET %s"
                     params.append(offset)

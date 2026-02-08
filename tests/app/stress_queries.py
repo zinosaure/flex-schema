@@ -29,6 +29,11 @@ class User(Flexmodel):
         signup_at=field(str, default="2024-01-01 00:00:00"),
     )
 
+    def count_contacts(self) -> int:
+        select = Contact.select()
+        select.where(select.user_id == self.id)
+        return select.count()
+
 
 class Contact(Flexmodel):
     schema: Schema = Schema.ident(
@@ -211,10 +216,11 @@ def run_queries() -> None:
                 "email": item.email,
                 "age": item.age,
                 "country": item.country,
+                "contacts": item.count_contacts(),
             }
             for item in page
         ]
-        print_table(rows, ["id", "name", "email", "age", "country"])
+        print_table(rows, ["id", "name", "email", "age", "country", "contacts"])
 
     connection.close()
 
