@@ -9,7 +9,6 @@ from typing import Callable, Type
 
 try:
     import pymysql
-
 except Exception:  # pragma: no cover - optional dependency
     pymysql = None
 
@@ -64,6 +63,7 @@ class Schema:
     def is_submittable(self, data: dict[str, Any]) -> bool:
         for name, field in self.fields.items():
             item = data.get(name, field.default)
+
             if hasattr(item, "schema") and isinstance(item.schema, Schema):
                 if not item.schema.is_submittable(item.__dict__):
                     return False
@@ -332,6 +332,7 @@ class Flexmodel(Flex):
     def load(cls, id: int | str) -> Optional["Flexmodel"]:
         with cls.connection().cursor(pymysql.cursors.DictCursor) as cursor:
             cursor.execute(f"SELECT * FROM `{cls.collection_name}` WHERE `_id` = %s LIMIT 1", (id,))
+
             if row := cursor.fetchone():
                 return cls._from_row(row)
 
