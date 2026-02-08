@@ -207,6 +207,7 @@ def run_queries() -> None:
 
         select.discard()
         select.sort(select.age.desc())
+        select.where(select.age > 40, select.country.is_not_empty())
         page = select.fetch_all(current=current, results_per_page=results_per_page)
         print(f"Page {current} with {results_per_page} items -> {len(page)} total results")
         rows = [
